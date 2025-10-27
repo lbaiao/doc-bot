@@ -1,6 +1,8 @@
 import pymupdf
 import os
 import logging
+from typing import Tuple
+import pandas as pd
 from analyzer.config import default_config
 from preprocessing.vector_figure_extractor import VectorFigureExtractor
 
@@ -16,9 +18,64 @@ class PdfExtractor:
         self.images_dir = os.path.join(self.output_dir, default_config.EXTRACTION_IMAGE_DIR)
         self.vector_graphics_dir = os.path.join(self.output_dir, default_config.EXTRACTION_VECTOR_GRAPHICS_DIR)
         self.doc = pymupdf.open(file_path)
+        self.parquet_path = os.path.join(self.output_dir, default_config.EXTRACTION_FIGURES_PARQUET_FILE)
         
         logger.info(f"Initialized PdfExtractor for file: {self.file_name}")
         logger.debug(f"Output directory: {self.output_dir}")
+
+    def extract_image_caption(self, page: pymupdf.Page, image_rect: pymupdf.Rect) -> Tuple[bool, str]:
+        """
+        Search for caption text below (or above) an image.
+        Returns (has_caption, caption_text)
+        """
+        # Define search zones
+        search_below = pymupdf.Rect(
+            image_rect.x0, 
+            image_rect.y1,  # Start at bottom of image
+            image_rect.x1, 
+            image_rect.y1 + 100  # Search 100 pixels below
+        )
+        
+        search_above = pymupdf.Rect(
+            image_rect.x0,
+            image_rect.y0 - 50,  # 50 pixels above
+            image_rect.x1,
+            image_rect.y0
+        )
+        
+        # Get words in both zones
+        all_words = page.get_text("words")
+        if not isinstance(all_words, list):
+            return False, ""
+            
+        words_below = [w for w in all_words 
+                       if isinstance(w, (list, tuple)) and len(w) >= 5 and 
+                       search_below.intersects(pymupdf.Rect(w[:4]))]
+        words_above = [w for w in all_words 
+                       if isinstance(w, (list, tuple)) and len(w) >= 5 and 
+                       search_above.intersects(pymupdf.Rect(w[:4]))]
+        
+        # Combine text
+        text_below = " ".join(w[4] for w in words_below if len(w) > 4).strip()
+        text_above = " ".join(w[4] for w in words_above if len(w) > 4).strip()
+        
+        # Check for caption keywords
+        caption_keywords = ("figure", "fig.", "fig", "table", "image", "photo", "chart", "diagram")
+        
+        text_below_lower = text_below.lower()
+        text_above_lower = text_above.lower()
+        
+        has_caption_below = any(kw in text_below_lower for kw in caption_keywords)
+        has_caption_above = any(kw in text_above_lower for kw in caption_keywords)
+        
+        if has_caption_below:
+            return True, text_below
+        elif has_caption_above:
+            return True, text_above
+        elif text_below:  # Return below text if exists, even without keywords
+            return False, text_below
+        
+        return False, ""
 
     def extract_text(self):
         logger.info(f"Starting text extraction from {self.file_name}")
@@ -40,6 +97,9 @@ class PdfExtractor:
         logger.info(f"Starting bitmap image extraction from {self.file_name}")
         doc = self.doc
         
+        # Store image metadata for parquet file
+        image_data = []
+        
         total_images = 0
         for page_index in range(len(doc)): # iterate over pdf pages
             page = doc[page_index] # get the page
@@ -55,6 +115,10 @@ class PdfExtractor:
 
             for image_index, img in enumerate(image_list, start=1): # enumerate the image list
                 xref = img[0] # get the XREF of the image
+                
+                # Get image bounding box on page
+                image_rects = page.get_image_rects(xref)
+                
                 pix = pymupdf.Pixmap(doc, xref) # create a Pixmap
 
                 if pix.n - pix.alpha > 3: # CMYK: convert to RGB first
@@ -65,11 +129,39 @@ class PdfExtractor:
                 os.makedirs(self.images_dir, exist_ok=True)
                 output_path = os.path.join(self.images_dir, filename)
                 pix.save(output_path) # save the image as png
+                
+                # Extract caption if image has bounding box
+                caption = ""
+                has_caption = False
+                if image_rects:
+                    rect = image_rects[0]  # Use first occurrence
+                    has_caption, caption = self.extract_image_caption(page, rect)
+                    if has_caption:
+                        logger.info(f"Found caption: {caption[:100]}")
+                    elif caption:
+                        logger.debug(f"Found text near image: {caption[:50]}")
+                
+                # Store metadata
+                image_data.append({
+                    'page_index': page_index,
+                    'image_index': image_index,
+                    'image_path': output_path,
+                    'has_caption': has_caption,
+                    'caption': caption,
+                    'width': pix.width,
+                    'height': pix.height
+                })
+                
                 logger.debug(f"Saved image: {output_path}")
                 pix = None
                 total_images += 1
                 logger.info(f"Extracted image {image_index} on page {page_index}")
 
+        # Save metadata to parquet file
+        if image_data:
+            df = pd.DataFrame(image_data)
+            df.to_parquet(self.parquet_path, index=False)
+            logger.info(f"Saved image metadata to {self.parquet_path}")
         
         logger.info(f"Bitmap image extraction complete: {total_images} images extracted to {self.images_dir}")
 
