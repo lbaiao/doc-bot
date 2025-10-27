@@ -3,3 +3,5 @@ __pycache__
 *.pdf
 pdf_files
 extraction
+.env
+.session
