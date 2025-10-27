@@ -1,6 +1,7 @@
 import pymupdf
 import os
 import logging
+import uuid
 from typing import Tuple
 import pandas as pd
 from analyzer.config import default_config
@@ -143,6 +144,7 @@ class PdfExtractor:
                 
                 # Store metadata
                 image_data.append({
+                    'id': str(uuid.uuid4()),
                     'page_index': page_index,
                     'image_index': image_index,
                     'image_path': output_path,
