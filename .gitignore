@@ -1,0 +1,5 @@
+venv
+__pycache__
+*.pdf
+pdf_files
+extraction
