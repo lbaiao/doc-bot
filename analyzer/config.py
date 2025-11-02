@@ -6,6 +6,10 @@ class Config(BaseSettings):
     EXTRACTION_IMAGE_DIR: str = "images"
     EXTRACTION_VECTOR_GRAPHICS_DIR: str = "vector_graphics"
     EXTRACTION_FIGURES_PARQUET_FILE: str = "figures_metadata.parquet"
+    EXTRACTION_LUCENE_INDEX_DIR: str = "lucene_index"
+    EXTRACTION_CHUNK_SIZE: int = 500 * 4  # number of characters per text chunk (500 tokens * 4 chars/token)
+    EXTRACTION_CHUNK_OVERLAP: float = EXTRACTION_CHUNK_SIZE * 0.15
+    EXTRACTION_CHUNK_DIR: str = "text_chunks" 
     PDF_DIR: str = "pdf_files"
 
     

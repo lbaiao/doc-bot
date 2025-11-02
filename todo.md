@@ -1,0 +1,1 @@
+- implement normalizing: Unicode NFC, whitespace collapse, hyphenation repair at line breaks, normalize bullets, fix common ligatures, stop-words?

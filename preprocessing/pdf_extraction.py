@@ -5,7 +5,10 @@ import uuid
 from typing import Tuple
 import pandas as pd
 from analyzer.config import default_config
+from analyzer.schemas import FigureImageCols as FIC, FigureImageMetadata
+from preprocessing.woosh_indexer import WooshIndexer
 from preprocessing.vector_figure_extractor import VectorFigureExtractor
+from preprocessing.chunker import TextChunker
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +88,8 @@ class PdfExtractor:
         
         page_count = 0
         for page in doc: # iterate the document pages
-            text = page.get_text().encode("utf8") # get plain text (is in UTF-8)
+            # get plain text (ensure str type for linters, then encode to UTF-8 bytes)
+            text = str(page.get_text()).encode("utf8")
             out.write(text) # write text of page
             out.write(bytes((12,))) # write page delimiter (form feed 0x0C)
             page_count += 1
@@ -142,17 +146,18 @@ class PdfExtractor:
                     elif caption:
                         logger.debug(f"Found text near image: {caption[:50]}")
                 
-                # Store metadata
-                image_data.append({
-                    'id': str(uuid.uuid4()),
-                    'page_index': page_index,
-                    'image_index': image_index,
-                    'image_path': output_path,
-                    'has_caption': has_caption,
-                    'caption': caption,
-                    'width': pix.width,
-                    'height': pix.height
-                })
+                # Store metadata (use canonical schema/columns)
+                record = FigureImageMetadata(
+                    id=str(uuid.uuid4()),
+                    page_index=page_index,
+                    image_index=image_index,
+                    image_path=output_path,
+                    has_caption=has_caption,
+                    caption=caption,
+                    width=pix.width,
+                    height=pix.height,
+                )
+                image_data.append(record.to_record())
                 
                 logger.debug(f"Saved image: {output_path}")
                 pix = None
@@ -188,10 +193,29 @@ class PdfExtractor:
         
         logger.info(f"Vector graphics extraction complete. {len(figs)} figures extracted to {self.vector_graphics_dir}")
 
+    def extract_text_chunks(self):
+        logger.info(f"Starting text chunking for {self.file_name}")
+        chunker = TextChunker()
+        paths = chunker.chunk_file(self.text_path, self.output_dir)
+        logger.info(f"Text chunking complete: {len(paths)} chunks saved to {default_config.EXTRACTION_CHUNK_DIR}")
+
+    def extract_lucene_index(self):
+        logger.info(f"Starting Lucene index extraction from {self.file_name}")
+        # Build Lucene-style index for this PDF's extracted artifacts
+        try:
+            indexer = WooshIndexer(self.output_dir, pdf_name=self.file_name)
+            indexer.build()
+            logger.info(f"Lucene index built successfully for {self.file_name}")
+        except Exception as e:
+            logger.error(f"Failed to build Lucene index for {self.file_name}: {e}")
+
     def extract_all(self):
         self.extract_text()
         self.extract_bitmap_images()
         self.extract_vector_graphics()
+        self.extract_text_chunks()
+        # Build Lucene-style index for this PDF's extracted artifacts
+        self.extract_lucene_index()
 
     def close(self):
         if hasattr(self, 'doc') and self.doc:
@@ -204,5 +228,3 @@ class PdfExtractor:
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
         return False  # Don't suppress exceptions
-
-
