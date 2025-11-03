@@ -10,7 +10,13 @@ class Config(BaseSettings):
     EXTRACTION_CHUNK_SIZE: int = 500 * 4  # number of characters per text chunk (500 tokens * 4 chars/token)
     EXTRACTION_CHUNK_OVERLAP: float = EXTRACTION_CHUNK_SIZE * 0.15
     EXTRACTION_CHUNK_DIR: str = "text_chunks" 
+    EXTRACTION_FAISS_DIR: str = "faiss_index"
     PDF_DIR: str = "pdf_files"
+    
+    # FAISS Configuration
+    FAISS_EMBEDDING_MODEL: str = "google/embeddinggemma-300m"
+    FAISS_DISTANCE_STRATEGY: str = "MAX_INNER_PRODUCT"  # Optimized for inner product search
+    FAISS_SEARCH_K: int = 5  # Default number of results to return in searches
 
     
     class Config:

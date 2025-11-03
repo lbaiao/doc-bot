@@ -9,6 +9,7 @@ from analyzer.schemas import FigureImageCols as FIC, FigureImageMetadata
 from preprocessing.woosh_indexer import WooshIndexer
 from preprocessing.vector_figure_extractor import VectorFigureExtractor
 from preprocessing.chunker import TextChunker
+from analyzer.faiss_wrapper import FaissWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +210,29 @@ class PdfExtractor:
         except Exception as e:
             logger.error(f"Failed to build Lucene index for {self.file_name}: {e}")
 
+    def extract_embeddings(self):
+        logger.info(f"Starting FAISS embedding extraction from {self.file_name}")
+        try:
+            # Initialize FAISS indexer
+            faiss_indexer = FaissWrapper()
+            
+            # Create and save FAISS index for this PDF's text chunks
+            success = faiss_indexer.index_extraction_directory(self.output_dir)
+            
+            if success:
+                # Get index information for logging
+                index_info = faiss_indexer.get_index_info()
+                logger.info(f"FAISS index created successfully for {self.file_name}. "
+                           f"Documents: {index_info.get('total_documents', 'unknown')}, "
+                           f"Embedding dimension: {index_info.get('embedding_dimension', 'unknown')}")
+            else:
+                logger.error(f"Failed to create FAISS index for {self.file_name}")
+                
+        except Exception as e:
+            logger.error(f"FAISS embedding extraction failed for {self.file_name}: {e}")
+        
+        logger.info(f"FAISS embedding extraction complete for {self.file_name}")
+
     def extract_all(self):
         self.extract_text()
         self.extract_bitmap_images()
@@ -216,6 +240,8 @@ class PdfExtractor:
         self.extract_text_chunks()
         # Build Lucene-style index for this PDF's extracted artifacts
         self.extract_lucene_index()
+        # Build FAISS vector embeddings index for semantic search
+        self.extract_embeddings()
 
     def close(self):
         if hasattr(self, 'doc') and self.doc:
