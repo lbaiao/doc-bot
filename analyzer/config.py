@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+import os
 
 class Config(BaseSettings):
     EXTRACTION_DIR: str = "extraction"
@@ -27,3 +28,16 @@ default_config = Config()
 
 def get_config() -> Config:
     return default_config
+
+class FullConfigPaths:
+    def __init__(self, file_name: str):
+        self.EXTRACTION_DIR = os.path.join(default_config.EXTRACTION_DIR, file_name)
+        self.EXTRACTION_TEXT_FILE = os.path.join(self.EXTRACTION_DIR, file_name, default_config.EXTRACTION_TEXT_FILE)
+        self.EXTRACTION_DIR: str = os.path.join(self.EXTRACTION_DIR, file_name, default_config.EXTRACTION_DIR)
+        self.EXTRACTION_TEXT_FILE: str = os.path.join(self.EXTRACTION_DIR, file_name, default_config.EXTRACTION_TEXT_FILE)
+        self.EXTRACTION_IMAGE_DIR: str = os.path.join(self.EXTRACTION_DIR, file_name, default_config.EXTRACTION_IMAGE_DIR)
+        self.EXTRACTION_VECTOR_GRAPHICS_DIR: str = os.path.join(self.EXTRACTION_DIR, file_name, default_config.EXTRACTION_VECTOR_GRAPHICS_DIR)
+        self.EXTRACTION_FIGURES_PARQUET_FILE: str = os.path.join(self.EXTRACTION_DIR, file_name, default_config.EXTRACTION_FIGURES_PARQUET_FILE)
+        self.EXTRACTION_LUCENE_INDEX_DIR: str = os.path.join(self.EXTRACTION_DIR, file_name, default_config.EXTRACTION_LUCENE_INDEX_DIR)
+        self.EXTRACTION_CHUNK_DIR: str = os.path.join(self.EXTRACTION_DIR, file_name, default_config.EXTRACTION_CHUNK_DIR)
+        self.EXTRACTION_FAISS_DIR: str = os.path.join(self.EXTRACTION_DIR, file_name, default_config.EXTRACTION_FAISS_DIR)
