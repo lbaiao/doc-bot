@@ -1,5 +1,5 @@
 from langchain.agents import create_agent
-from langchain_anthropic import ChatAnthropic
+from langchain_anthropic import ChatAnthropic, convert_to_anthropic_tool
 
 from agents.tools import vector_search, text_search, get_chunks
 
@@ -13,5 +13,4 @@ def make_document_agent():
         # other params...
 )
     tools = [vector_search, text_search, get_chunks]
-    # anthropic_tools = [convert_to_anthropic_tool(x) for x in tools]
-    return create_agent(chat, tools=tools)
+    return create_agent(chat, tools)

@@ -14,14 +14,14 @@ from typing import Any, List
 
 from langchain.tools import tool
 
-from session.session_registry import SessionRegistry
+from session.session_registry import default_registry
 
 # -------- session state ---------
-_registry = SessionRegistry(max_sessions=4)
-_active_doc: str | None = None
+_registry = default_registry
 
 
 def _require_active_doc() -> str:
+    _active_doc = _registry.get_active()
     if not _active_doc:
         raise ValueError("No active document set. Call set_active_document(doc_file_name) first.")
     return _active_doc

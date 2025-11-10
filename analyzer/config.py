@@ -18,6 +18,7 @@ class Config(BaseSettings):
     FAISS_EMBEDDING_MODEL: str = "google/embeddinggemma-300m"
     FAISS_DISTANCE_STRATEGY: str = "MAX_INNER_PRODUCT"  # Optimized for inner product search
     FAISS_SEARCH_K: int = 5  # Default number of results to return in searches
+    ANTHROPIC_API_KEY: str = ""
 
     
     class Config:

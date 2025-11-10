@@ -88,6 +88,9 @@ class SessionRegistry:
     def set_active(self, doc_file_name: str):
         self._active_session = doc_file_name
 
+    def get_active(self) -> Optional[str]:
+        return self._active_session
+
     # ---------- helpers ----------
 
     def ensure(self, doc_file_name: str) -> DocResources:
@@ -181,3 +184,5 @@ class SessionRegistry:
         return chunks
 
 __all__ = ["SessionRegistry", "DocResources", "Chunk"]
+
+default_registry = SessionRegistry(max_sessions=4)
