@@ -5,3 +5,4 @@ pdf_files
 extraction
 .env
 .session
+.vscode
