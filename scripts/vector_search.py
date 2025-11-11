@@ -38,6 +38,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 	ap.add_argument("--show-text", action="store_true", help="Show a short preview from the chunk file when possible")
 	ap.add_argument("--max-chars", type=int, default=240, help="Max preview characters (default: 240)")
 	ap.add_argument("--force-rebuild", action="store_true", help="Force rebuilding the FAISS index even if it exists")
+	ap.add_argument("--image-captions", action="store_true", help="Search image captions index instead of text chunks")
 	args = ap.parse_args(argv)
 
 	# Build extraction directory path
@@ -52,17 +53,22 @@ def main(argv: Optional[list[str]] = None) -> int:
 		# Initialize FAISS wrapper
 		faiss_wrapper = FaissWrapper()
 		
-		# Load or create FAISS index
-		index_loaded = faiss_wrapper.index_extraction_directory(extraction_dir, force_rebuild=args.force_rebuild)
+		# Load or create FAISS index (either text chunks or image captions)
+		if args.image_captions:
+			index_loaded = faiss_wrapper.index_image_captions(extraction_dir, force_rebuild=args.force_rebuild)
+			index_type = "image captions"
+		else:
+			index_loaded = faiss_wrapper.index_extraction_directory(extraction_dir, force_rebuild=args.force_rebuild)
+			index_type = "text chunks"
 		
 		if not index_loaded:
-			sys.stderr.write(f"Error: Failed to load or create FAISS index for '{args.file_name}'\n")
+			sys.stderr.write(f"Error: Failed to load or create FAISS {index_type} index for '{args.file_name}'\n")
 			return 1
 		
 		# Get index information
 		index_info = faiss_wrapper.get_index_info()
 		if index_info.get("status") == "loaded":
-			print(f"Loaded FAISS index: {index_info.get('total_documents', 0)} documents, "
+			print(f"Loaded FAISS {index_type} index: {index_info.get('total_documents', 0)} documents, "
 			      f"{index_info.get('embedding_dimension', 0)}D embeddings")
 			print(f"Model: {index_info.get('embedding_model', 'unknown')}")
 			print(f"Distance strategy: {index_info.get('distance_strategy', 'unknown')}")
@@ -88,14 +94,20 @@ def main(argv: Optional[list[str]] = None) -> int:
 	for i, (document, score) in enumerate(results, start=1):
 		# Extract metadata
 		metadata = document.metadata
-		chunk_number = metadata.get("chunk_number", "unknown")
-		filename = metadata.get("filename", "unknown")
-		source_path = metadata.get("source", "")
+		source_type = metadata.get("source", "")
 		
-		# Format header with score and metadata
-		header = f"[{i:02d}] similarity={score:.4f} chunk={chunk_number}"
-		if filename != "unknown":
-			header += f" file={filename}"
+		# Format header differently for image captions vs text chunks
+		if source_type == "image_caption":
+			page_idx = metadata.get("page_index", "unknown")
+			image_idx = metadata.get("image_index", "unknown")
+			image_path = metadata.get("image_path", "")
+			header = f"[{i:02d}] similarity={score:.4f} page={page_idx} image={image_idx}"
+		else:
+			chunk_number = metadata.get("chunk_number", "unknown")
+			filename = metadata.get("filename", "unknown")
+			header = f"[{i:02d}] similarity={score:.4f} chunk={chunk_number}"
+			if filename != "unknown":
+				header += f" file={filename}"
 		
 		print(header)
 		
@@ -116,8 +128,14 @@ def main(argv: Optional[list[str]] = None) -> int:
 				print(f"    preview:    {long_preview}")
 		
 		# Show source file path if available
-		if source_path:
-			print(f"    source:     {source_path}")
+		if source_type == "image_caption":
+			image_path = metadata.get("image_path", "")
+			if image_path:
+				print(f"    image:      {image_path}")
+		else:
+			source_path = metadata.get("source", "")
+			if source_path:
+				print(f"    source:     {source_path}")
 		
 		print()  # Add spacing between results
 

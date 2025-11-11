@@ -222,11 +222,25 @@ class PdfExtractor:
             if success:
                 # Get index information for logging
                 index_info = faiss_indexer.get_index_info()
-                logger.info(f"FAISS index created successfully for {self.file_name}. "
+                logger.info(f"FAISS text index created successfully for {self.file_name}. "
                            f"Documents: {index_info.get('total_documents', 'unknown')}, "
                            f"Embedding dimension: {index_info.get('embedding_dimension', 'unknown')}")
             else:
-                logger.error(f"Failed to create FAISS index for {self.file_name}")
+                logger.error(f"Failed to create FAISS text index for {self.file_name}")
+            
+            # Create and save FAISS index for image captions
+            logger.info(f"Starting FAISS image captions index creation for {self.file_name}")
+            captions_indexer = FaissWrapper()
+            captions_success = captions_indexer.index_image_captions(self.output_dir)
+            
+            if captions_success:
+                # Get index information for logging
+                captions_info = captions_indexer.get_index_info()
+                logger.info(f"FAISS image captions index created successfully for {self.file_name}. "
+                           f"Captions: {captions_info.get('total_documents', 'unknown')}, "
+                           f"Embedding dimension: {captions_info.get('embedding_dimension', 'unknown')}")
+            else:
+                logger.warning(f"No image captions to index or failed to create index for {self.file_name}")
                 
         except Exception as e:
             logger.error(f"FAISS embedding extraction failed for {self.file_name}: {e}")

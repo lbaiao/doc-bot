@@ -2,6 +2,7 @@ import os
 import logging
 from typing import List, Tuple, Optional
 
+import pandas as pd
 from langchain_core.documents.base import Document
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
@@ -257,6 +258,168 @@ class FaissWrapper:
         except Exception as e:
             logger.error(f"FaissIndexer: failed to get index info: {e}")
             return {"status": "error", "error": str(e)}
+
+    def load_image_captions(self, extraction_dir: str) -> List[Document]:
+        """
+        Load image captions from the figures_metadata.parquet file.
+        
+        Returns:
+            List of LangChain Document objects with caption text and image metadata
+        """
+        parquet_path = os.path.join(extraction_dir, default_config.EXTRACTION_FIGURES_PARQUET_FILE)
+        
+        if not os.path.exists(parquet_path):
+            logger.warning(f"FaissIndexer: parquet file does not exist: {parquet_path}")
+            return []
+        
+        try:
+            # Read the parquet file
+            df = pd.read_parquet(parquet_path)
+            
+            # Filter for images with non-empty captions
+            df_with_captions = df[df['caption'].notna() & (df['caption'].str.strip() != '')]
+            
+            documents = []
+            for _, row in df_with_captions.iterrows():
+                # Create document with caption as content
+                doc = Document(
+                    page_content=row['caption'],
+                    metadata={
+                        "image_id": row['id'],
+                        "image_path": row['image_path'],
+                        "page_index": int(row['page_index']),
+                        "image_index": int(row['image_index']),
+                        "has_caption": bool(row['has_caption']),
+                        "width": int(row['width']),
+                        "height": int(row['height']),
+                        "extraction_dir": extraction_dir,
+                        "source": "image_caption"
+                    }
+                )
+                documents.append(doc)
+            
+            logger.info(f"FaissIndexer: loaded {len(documents)} image captions from {parquet_path}")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"FaissIndexer: failed to read parquet file {parquet_path}: {e}")
+            return []
+
+    def create_image_captions_index(self, extraction_dir: str) -> bool:
+        """
+        Create FAISS index from image captions in the specified extraction directory.
+        
+        Args:
+            extraction_dir: Path to the extraction directory containing figures_metadata.parquet
+            
+        Returns:
+            True if index was created successfully, False otherwise
+        """
+        try:
+            documents = self.load_image_captions(extraction_dir)
+            
+            if not documents:
+                logger.warning(f"FaissIndexer: no image captions found to index in {extraction_dir}")
+                return False
+            
+            logger.info(f"FaissIndexer: creating FAISS index for {len(documents)} image captions")
+            
+            # Create FAISS vector store with the specified distance strategy
+            self.vector_store = FAISS.from_documents(
+                documents, 
+                self.embeddings, 
+                distance_strategy=self.distance_strategy
+            )
+            
+            logger.info(f"FaissIndexer: successfully created FAISS image captions index")
+            return True
+            
+        except Exception as e:
+            logger.error(f"FaissIndexer: failed to create image captions index: {e}")
+            return False
+
+    def save_image_captions_index(self, extraction_dir: str) -> bool:
+        """
+        Save the FAISS image captions index to disk.
+        
+        Args:
+            extraction_dir: Path to the extraction directory where index will be saved
+            
+        Returns:
+            True if index was saved successfully, False otherwise
+        """
+        if not self.vector_store:
+            logger.warning("FaissIndexer: no index to save")
+            return False
+        
+        try:
+            index_dir = os.path.join(extraction_dir, default_config.EXTRACTION_FAISS_IMAGES_DIR)
+            os.makedirs(index_dir, exist_ok=True)
+            
+            # FAISS save_local expects the directory path
+            self.vector_store.save_local(index_dir)
+            
+            logger.info(f"FaissIndexer: saved image captions index to {index_dir}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"FaissIndexer: failed to save image captions index: {e}")
+            return False
+
+    def load_image_captions_index(self, extraction_dir: str) -> bool:
+        """
+        Load an existing FAISS image captions index from disk.
+        
+        Args:
+            extraction_dir: Path to the extraction directory containing the saved index
+            
+        Returns:
+            True if index was loaded successfully, False otherwise
+        """
+        try:
+            index_dir = os.path.join(extraction_dir, default_config.EXTRACTION_FAISS_IMAGES_DIR)
+            
+            if not os.path.exists(index_dir):
+                logger.warning(f"FaissIndexer: image captions index directory does not exist: {index_dir}")
+                return False
+            
+            # Load the FAISS index with the same embeddings
+            self.vector_store = FAISS.load_local(
+                index_dir, 
+                self.embeddings, 
+                allow_dangerous_deserialization=True  # Required for loading FAISS indexes
+            )
+            
+            logger.info(f"FaissIndexer: loaded image captions index from {index_dir}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"FaissIndexer: failed to load image captions index: {e}")
+            return False
+
+    def index_image_captions(self, extraction_dir: str, force_rebuild: bool = False) -> bool:
+        """
+        Complete workflow: create and save FAISS index for image captions.
+        
+        Args:
+            extraction_dir: Path to the extraction directory
+            force_rebuild: If True, rebuild even if index already exists
+            
+        Returns:
+            True if indexing was successful, False otherwise
+        """
+        index_dir = os.path.join(extraction_dir, default_config.EXTRACTION_FAISS_IMAGES_DIR)
+        
+        # Check if index already exists
+        if os.path.exists(index_dir) and not force_rebuild:
+            logger.info(f"FaissIndexer: image captions index already exists at {index_dir}, loading existing index")
+            return self.load_image_captions_index(extraction_dir)
+        
+        # Create new index
+        if self.create_image_captions_index(extraction_dir):
+            return self.save_image_captions_index(extraction_dir)
+        else:
+            return False
 
 
 __all__ = ["FaissWrapper"]

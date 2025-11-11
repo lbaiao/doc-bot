@@ -12,6 +12,7 @@ class Config(BaseSettings):
     EXTRACTION_CHUNK_OVERLAP: float = EXTRACTION_CHUNK_SIZE * 0.15
     EXTRACTION_CHUNK_DIR: str = "text_chunks" 
     EXTRACTION_FAISS_DIR: str = "faiss_index"
+    EXTRACTION_FAISS_IMAGES_DIR: str = "faiss_index_images"
     PDF_DIR: str = "pdf_files"
     
     # FAISS Configuration
