@@ -15,6 +15,7 @@ from typing import Any, List
 from langchain.tools import tool
 
 from session.session_registry import default_registry
+from analyzer.config import get_config
 
 # -------- session state ---------
 _registry = default_registry
@@ -107,6 +108,42 @@ def hybrid_search(query: str, search_type: str = "text", k: int = 5) -> str:
     }, ensure_ascii=False)
 
 
+@tool
+def fetch_images(image_ids: str) -> str:
+    f"""Upload images to Anthropic and get file IDs for use in the conversation.
+    
+    Takes comma-separated image UUIDs (from search_caption results) and uploads them
+    to Anthropic's Files API. Returns file IDs and content blocks ready to use.
+    Images are cached for {get_config().ANTHROPIC_IMAGE_CACHE_HOURS} hours to avoid re-uploading.
+    
+    Args:
+        image_ids: Comma-separated list of image UUIDs (e.g., "uuid1,uuid2,uuid3")
+    
+    Returns:
+        JSON with file_ids, image metadata, content_blocks, and cache statistics.
+    """
+    doc = _require_active_doc()
+    
+    # Parse image IDs
+    ids: List[str] = [id.strip() for id in image_ids.split(",") if id.strip()]
+    
+    if not ids:
+        return json.dumps({
+            "error": "No image IDs provided",
+            "document": doc,
+            "file_ids": [],
+            "images": [],
+            "content_blocks": [],
+        }, ensure_ascii=False)
+    
+    # Upload images
+    result = _registry.upload_images_to_anthropic(doc, ids)
+    result["document"] = doc
+    result["requested_ids"] = ids
+    
+    return json.dumps(result, ensure_ascii=False)
+
+
 __all__ = [
     "set_active_document",
     "text_search",
@@ -114,4 +151,5 @@ __all__ = [
     "get_chunks",
     "search_caption",
     "hybrid_search",
+    "fetch_images",
 ]

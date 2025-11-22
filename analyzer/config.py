@@ -20,6 +20,12 @@ class Config(BaseSettings):
     FAISS_DISTANCE_STRATEGY: str = "MAX_INNER_PRODUCT"  # Optimized for inner product search
     FAISS_SEARCH_K: int = 5  # Default number of results to return in searches
     ANTHROPIC_API_KEY: str = ""
+    
+    # Anthropic Files API Configuration
+    ANTHROPIC_FILE_CACHE_NAME: str = ".anthropic_file_cache.json"
+    ANTHROPIC_FILE_TTL_HOURS: int = 12  # Files expire after 12 hours
+    ANTHROPIC_FILES_BETA_HEADER: str = "files-api-2025-04-14"
+    IMAGE_UPLOAD_LIMIT: int = 20  # Maximum images to upload in one batch
 
     
     class Config:

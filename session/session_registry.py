@@ -30,10 +30,14 @@ import logging
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 
+import pandas as pd
+import anthropic
+
 from analyzer.config import default_config
 from analyzer.woosh_searcher import WooshSearcher
 from analyzer.faiss_wrapper import FaissWrapper
 from analyzer.schemas import DocumentTypes
+from analyzer.anthropic_cache import AnthropicFileCache
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,7 @@ class DocResources:
     text_index: TextSearchIndex
     chunks_dir: str
     parquet_path: str
+    anthropic_cache: AnthropicFileCache
 
 # --------- Session registry (in-memory) ---------
 class SessionRegistry:
@@ -120,6 +125,9 @@ class SessionRegistry:
         captions_loaded = captions_wrapper.load_image_captions_index(extraction_dir)
         image_captions_index = VectorIndex(wrapper=captions_wrapper, loaded=captions_loaded)
 
+        # Initialize Anthropic file cache
+        anthropic_cache = AnthropicFileCache(extraction_dir)
+
         res = DocResources(
             doc_id=doc_file_name,
             vector_index=vector_index,
@@ -127,6 +135,7 @@ class SessionRegistry:
             text_index=TextSearchIndex(woosh_dir=woosh_dir, searcher=text_searcher),
             chunks_dir=chunks_dir,
             parquet_path=parquet_path,
+            anthropic_cache=anthropic_cache,
         )
         self.put(doc_file_name, res)
         return res
@@ -296,6 +305,173 @@ class SessionRegistry:
         # Sort by hybrid score and return top k
         results = sorted(combined.values(), key=lambda x: x["hybrid_score"], reverse=True)
         return results[:k]
+
+    def upload_images_to_anthropic(
+        self,
+        doc_file_name: str,
+        image_ids: List[str],
+    ) -> Dict[str, Any]:
+        """Upload images to Anthropic Files API and return file IDs with metadata.
+        
+        Uses cache to avoid re-uploading recently uploaded images.
+        
+        Args:
+            doc_file_name: Document to fetch images from
+            image_ids: List of image UUIDs to upload
+            
+        Returns:
+            Dictionary with:
+                - file_ids: List of Anthropic file IDs
+                - images: List of image metadata dicts
+                - content_blocks: Ready-to-use message content blocks
+                - cached_count: Number of images served from cache
+                - uploaded_count: Number of newly uploaded images
+        """
+        res = self.ensure(doc_file_name)
+        cache = res.anthropic_cache
+        
+        # Limit number of images
+        if len(image_ids) > default_config.IMAGE_UPLOAD_LIMIT:
+            logger.warning(f"Requested {len(image_ids)} images, limiting to {default_config.IMAGE_UPLOAD_LIMIT}")
+            image_ids = image_ids[:default_config.IMAGE_UPLOAD_LIMIT]
+        
+        # Load parquet to get image metadata
+        if not os.path.exists(res.parquet_path):
+            logger.error(f"Parquet file not found: {res.parquet_path}")
+            return {
+                "error": "Image metadata not found",
+                "file_ids": [],
+                "images": [],
+                "content_blocks": [],
+                "cached_count": 0,
+                "uploaded_count": 0,
+            }
+        
+        try:
+            df = pd.read_parquet(res.parquet_path)
+            # Filter for requested image IDs
+            df_filtered = df[df['id'].isin(image_ids)]
+            
+            if df_filtered.empty:
+                logger.warning(f"No images found for IDs: {image_ids}")
+                return {
+                    "error": "No matching images found",
+                    "file_ids": [],
+                    "images": [],
+                    "content_blocks": [],
+                    "cached_count": 0,
+                    "uploaded_count": 0,
+                }
+            
+        except Exception as e:
+            logger.error(f"Failed to read parquet file: {e}")
+            return {
+                "error": f"Failed to read image metadata: {str(e)}",
+                "file_ids": [],
+                "images": [],
+                "content_blocks": [],
+                "cached_count": 0,
+                "uploaded_count": 0,
+            }
+        
+        # Initialize Anthropic client
+        try:
+            client = anthropic.Anthropic(api_key=default_config.ANTHROPIC_API_KEY)
+        except Exception as e:
+            logger.error(f"Failed to initialize Anthropic client: {e}")
+            return {
+                "error": f"Failed to initialize Anthropic client: {str(e)}",
+                "file_ids": [],
+                "images": [],
+                "content_blocks": [],
+                "cached_count": 0,
+                "uploaded_count": 0,
+            }
+        
+        file_ids = []
+        images = []
+        content_blocks = []
+        cached_count = 0
+        uploaded_count = 0
+        
+        # Process each image
+        for _, row in df_filtered.iterrows():
+            image_id = row['id']
+            image_path = row['image_path']
+            
+            # Check cache first
+            cached = cache.get(image_id)
+            if cached:
+                logger.debug(f"Using cached file ID for image {image_id}: {cached.file_id}")
+                file_id = cached.file_id
+                cached_count += 1
+            else:
+                # Upload to Anthropic
+                if not os.path.exists(image_path):
+                    logger.warning(f"Image file not found: {image_path}")
+                    continue
+                
+                try:
+                    # Determine media type from extension
+                    ext = os.path.splitext(image_path)[1].lower()
+                    media_type_map = {
+                        '.png': 'image/png',
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.gif': 'image/gif',
+                        '.webp': 'image/webp',
+                    }
+                    media_type = media_type_map.get(ext, 'image/png')
+                    
+                    # Upload file
+                    with open(image_path, 'rb') as f:
+                        file_obj = client.beta.files.upload(
+                            file=(os.path.basename(image_path), f, media_type),
+                        )
+                    
+                    file_id = file_obj.id
+                    logger.info(f"Uploaded image {image_id} to Anthropic: {file_id}")
+                    
+                    # Cache the file ID
+                    cache.set(image_id, file_id, image_path)
+                    uploaded_count += 1
+                    
+                except Exception as e:
+                    logger.error(f"Failed to upload image {image_path}: {e}")
+                    continue
+            
+            # Collect metadata
+            file_ids.append(file_id)
+            images.append({
+                "image_id": image_id,
+                "image_path": image_path,
+                "file_id": file_id,
+                "page_index": int(row['page_index']),
+                "image_index": int(row['image_index']),
+                "caption": row['caption'],
+                "has_caption": bool(row['has_caption']),
+                "width": int(row['width']),
+                "height": int(row['height']),
+            })
+            
+            # Create content block for this image
+            content_blocks.append({
+                "type": "image",
+                "source": {
+                    "type": "file",
+                    "file_id": file_id,
+                }
+            })
+        
+        logger.info(f"Processed {len(file_ids)} images: {cached_count} from cache, {uploaded_count} newly uploaded")
+        
+        return {
+            "file_ids": file_ids,
+            "images": images,
+            "content_blocks": content_blocks,
+            "cached_count": cached_count,
+            "uploaded_count": uploaded_count,
+        }
 
 __all__ = ["SessionRegistry", "DocResources", "Chunk"]
 
