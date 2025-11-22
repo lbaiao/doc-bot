@@ -9,7 +9,8 @@ if PROJECT_ROOT not in sys.path:
 
 import sys
 from typing import List
-from langchain_core.messages import HumanMessage, AIMessage
+import argparse
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from agents.agent import make_document_agent
 from session.session_registry import default_registry
@@ -22,10 +23,18 @@ def print_separator():
     """Print a visual separator."""
     print("\n" + "=" * 80 + "\n")
 
-def chat_loop(agent, document_name: str):
+def truncate_output(text: str, max_length: int = 200) -> str:
+    """Truncate text to max_length characters."""
+    if len(text) <= max_length:
+        return text
+    return text[:max_length] + "..."
+
+def chat_loop(agent, document_name: str, verbose: bool = False):
     """Run the interactive chat loop."""
     print("\n🤖 Document Chat Bot")
     print(f"📄 Active Document: {document_name}")
+    if verbose:
+        print("🔊 Verbose mode: ON")
     print("\nCommands:")
     print("  • Type your question to chat with the document")
     print("  • 'quit' or 'exit' to end the session")
@@ -61,6 +70,26 @@ def chat_loop(agent, document_name: str):
             print("\n🔍 Processing...\n")
             response = agent.invoke({"messages": chat_history})
 
+            # Display verbose information if enabled
+            if verbose:
+                print("🧠 Agent Thinking Process:")
+                print("-" * 80)
+                for msg in response['messages'][:-1]:  # All messages except the final answer
+                    if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                        # Agent is calling tools
+                        for tool_call in msg.tool_calls:
+                            print(f"\n🔧 Tool Call: {tool_call['name']}")
+                            print(f"   Arguments: {tool_call['args']}")
+                    elif isinstance(msg, ToolMessage):
+                        # Tool response
+                        tool_output = str(msg.content)
+                        print(f"\n📤 Tool Output ({msg.name}):")
+                        print(f"   {truncate_output(tool_output, 200)}")
+                    elif hasattr(msg, 'content') and msg.content and not isinstance(msg, (HumanMessage,)):
+                        # Agent's reasoning (if any)
+                        print(f"\n💭 Agent: {truncate_output(msg.content, 200)}")
+                print("\n" + "-" * 80 + "\n")
+
             llm_answer = response['messages'][-1].content
 
             chat_history.append({"role": "assistant", "content": llm_answer})
@@ -80,14 +109,18 @@ def chat_loop(agent, document_name: str):
 
 def main():
     """Main entry point."""
-    # Default document
-    document_name = "ID 35"
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Chat with a document using an AI agent")
+    parser.add_argument("document", nargs="?", default="ID 35", help="Document name to query")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose mode to show agent thinking and tool outputs")
+    args = parser.parse_args()
+
+    document_name = args.document
+    verbose = args.verbose
+
+    # Initialize document session
     default_registry.ensure(document_name)
     default_registry.set_active(document_name)
-
-    # Allow document name as command line argument
-    if len(sys.argv) > 1:
-        document_name = sys.argv[1]
 
     # Create agent
     print("\n🚀 Initializing agent...")
@@ -95,7 +128,7 @@ def main():
     print("✅ Agent ready!")
 
     # Start chat loop
-    chat_loop(agent, document_name)
+    chat_loop(agent, document_name, verbose=verbose)
 
 
 if __name__ == "__main__":

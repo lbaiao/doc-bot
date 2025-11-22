@@ -76,9 +76,42 @@ def get_chunks(chunk_numbers: str) -> str:
     return json.dumps({"document": doc, "requested": nums, "found": len(payload), "chunks": payload}, ensure_ascii=False)
 
 
+@tool
+def search_caption(query: str, k: int = 5) -> str:
+    """Vector (FAISS) similarity search over image captions of the active document.
+    
+    Returns JSON list of images with caption, image_path, page_index, score, and dimensions.
+    Use this to find images/figures by their captions or descriptions.
+    """
+    doc = _require_active_doc()
+    results = _registry.search_image_captions(doc, query, k=k)
+    return json.dumps({"document": doc, "query": query, "count": len(results), "results": results}, ensure_ascii=False)
+
+
+@tool
+def hybrid_search(query: str, search_type: str = "text", k: int = 5) -> str:
+    """Hybrid search combining lexical (Whoosh) and vector (FAISS) results for the active document.
+    
+    search_type: 'text' for text chunks (default) or 'captions' for image captions.
+    Returns combined results ranked by hybrid score (weighted combination of lexical + vector).
+    """
+    doc = _require_active_doc()
+    index_type = "captions" if search_type.lower() == "captions" else "text"
+    results = _registry.hybrid_search(doc, query, index_type=index_type, k=k)
+    return json.dumps({
+        "document": doc,
+        "query": query,
+        "search_type": search_type,
+        "count": len(results),
+        "results": results
+    }, ensure_ascii=False)
+
+
 __all__ = [
     "set_active_document",
     "text_search",
     "vector_search",
     "get_chunks",
+    "search_caption",
+    "hybrid_search",
 ]
