@@ -17,6 +17,9 @@ from langchain.tools import tool
 from session.session_registry import default_registry
 from analyzer.config import get_config
 
+from langchain_anthropic import ChatAnthropic
+
+
 # -------- session state ---------
 _registry = default_registry
 
@@ -109,19 +112,27 @@ def hybrid_search(query: str, search_type: str = "text", k: int = 5) -> str:
 
 
 @tool
-def fetch_images(image_ids: str) -> str:
-    f"""Upload images to Anthropic and get file IDs for use in the conversation.
+def analyze_images(image_ids: str, instruction: str, context: str = "") -> str:
+    """Analyze images from the document using Claude's vision capabilities.
     
-    Takes comma-separated image UUIDs (from search_caption results) and uploads them
-    to Anthropic's Files API. Returns file IDs and content blocks ready to use.
-    Images are cached for {get_config().ANTHROPIC_IMAGE_CACHE_HOURS} hours to avoid re-uploading.
+    Fetches images (by UUID from search_caption results), uploads them to Anthropic,
+    and gets Claude's analysis based on your instruction. Images are cached for 12 hours.
     
     Args:
-        image_ids: Comma-separated list of image UUIDs (e.g., "uuid1,uuid2,uuid3")
+        image_ids: Comma-separated image UUIDs (e.g., "uuid1,uuid2,uuid3")
+        instruction: What you want Claude to do with the images. Be specific.
+                    Examples: "Describe what you see in these diagrams",
+                             "Extract all text and equations from these figures",
+                             "Compare these two charts and explain the differences",
+                             "Identify the key components in this architecture diagram"
+        context: Optional additional context or background information to help with analysis.
+                Examples: "These are from a paper about neural networks",
+                         "The user is asking about the methodology section"
     
     Returns:
-        JSON with file_ids, image metadata, content_blocks, and cache statistics.
+        JSON with Claude's analysis, image metadata, and processing statistics.
     """
+    
     doc = _require_active_doc()
     
     # Parse image IDs
@@ -131,17 +142,69 @@ def fetch_images(image_ids: str) -> str:
         return json.dumps({
             "error": "No image IDs provided",
             "document": doc,
-            "file_ids": [],
-            "images": [],
-            "content_blocks": [],
+            "analysis": None,
         }, ensure_ascii=False)
     
-    # Upload images
-    result = _registry.upload_images_to_anthropic(doc, ids)
-    result["document"] = doc
-    result["requested_ids"] = ids
+    # Upload images to Anthropic
+    upload_result = _registry.upload_images_to_anthropic(doc, ids)
     
-    return json.dumps(result, ensure_ascii=False)
+    if "error" in upload_result:
+        return json.dumps({
+            "error": upload_result["error"],
+            "document": doc,
+            "analysis": None,
+        }, ensure_ascii=False)
+    
+    # Build message content with images
+    content = []
+    
+    # Add context if provided
+    if context.strip():
+        content.append({
+            "type": "text",
+            "text": f"Context: {context}\n\n"
+        })
+    
+    # Add image content blocks
+    content.extend(upload_result["content_blocks"])
+    
+    # Add the instruction
+    content.append({
+        "type": "text",
+        "text": instruction
+    })
+    
+    # Call Claude with vision
+    try:
+        config = get_config()
+        vision_model = ChatAnthropic(
+            model="claude-sonnet-4-5-20250929",
+            api_key=config.ANTHROPIC_API_KEY,
+            betas=["files-api-2025-04-14"],
+        )
+        
+        message = {
+            "role": "user",
+            "content": content
+        }
+        
+        response = vision_model.invoke([message])
+        
+        return json.dumps({
+            "document": doc,
+            "analysis": response.content,
+            "images_analyzed": len(ids),
+            "cached_count": upload_result.get("cached_count", 0),
+            "uploaded_count": upload_result.get("uploaded_count", 0),
+            "image_metadata": upload_result.get("images", []),
+        }, ensure_ascii=False)
+        
+    except Exception as e:
+        return json.dumps({
+            "error": f"Failed to analyze images: {str(e)}",
+            "document": doc,
+            "analysis": None,
+        }, ensure_ascii=False)
 
 
 __all__ = [
@@ -151,5 +214,5 @@ __all__ = [
     "get_chunks",
     "search_caption",
     "hybrid_search",
-    "fetch_images",
+    "analyze_images",
 ]

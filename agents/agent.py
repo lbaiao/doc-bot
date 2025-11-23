@@ -1,7 +1,7 @@
 from langchain.agents import create_agent
 from langchain_anthropic import ChatAnthropic
 
-from agents.tools import hybrid_search, search_caption, text_search, get_chunks, fetch_images
+from agents.tools import hybrid_search, search_caption, text_search, get_chunks, analyze_images
 
 def make_document_agent():
     chat = ChatAnthropic(
@@ -12,5 +12,5 @@ def make_document_agent():
         max_retries=2,
         # other params...
 )
-    tools = [hybrid_search, text_search, get_chunks, search_caption, fetch_images]
+    tools = [hybrid_search, text_search, get_chunks, search_caption, analyze_images]
     return create_agent(chat, tools)
