@@ -48,17 +48,16 @@ class FigureOut(BaseModel):
 
 
 class TableOut(BaseModel):
+    model_config = {"from_attributes": True}
+    
     id: uuid.UUID
     document_id: uuid.UUID
     page_id: uuid.UUID
     table_no: int
     bbox_json: Optional[dict] = None
     caption_text: Optional[str] = None
-    schema_json: Optional[dict] = None
+    table_schema: Optional[dict] = None  # Renamed to avoid shadowing
     data_uri: Optional[str] = None
-    
-    class Config:
-        from_attributes = True
 
 
 class UploadResult(BaseModel):

@@ -14,7 +14,8 @@ from typing import Any, List
 
 from langchain.tools import tool
 
-from session.session_registry import default_registry
+# Use DB-backed registry instead of file-based
+from session.db_registry import default_registry
 from analyzer.config import get_config
 
 from langchain_anthropic import ChatAnthropic
