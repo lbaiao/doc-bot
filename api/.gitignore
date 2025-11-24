@@ -6,3 +6,23 @@ extraction
 .env
 .session
 .vscode
+
+# API specific
+storage/
+*.db
+*.sqlite
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Generated clients
+clients/ts/node_modules/
+clients/ts/dist/
+
+# Database
+*.db-journal
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
