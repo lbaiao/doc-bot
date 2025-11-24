@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db.base import engine
+from app.db.init_db import init_db
 from app.routers import admin, auth, chats, documents, search, users
 
 
@@ -14,6 +15,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan management."""
     # Startup
     setup_logging()
+    await init_db()
     
     # TODO: Initialize vector DB connection
     # TODO: Initialize Redis connection for Celery
