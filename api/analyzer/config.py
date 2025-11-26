@@ -16,7 +16,8 @@ class Config(BaseSettings):
     PDF_DIR: str = "pdf_files"
     
     # FAISS Configuration
-    FAISS_EMBEDDING_MODEL: str = "google/embeddinggemma-300m"
+    # Fully permissive, lightweight embedding model (Apache-2.0)
+    FAISS_EMBEDDING_MODEL: str = "nomic-ai/nomic-embed-text-v1.5"
     FAISS_DISTANCE_STRATEGY: str = "MAX_INNER_PRODUCT"  # Optimized for inner product search
     FAISS_SEARCH_K: int = 5  # Default number of results to return in searches
     ANTHROPIC_API_KEY: str = ""

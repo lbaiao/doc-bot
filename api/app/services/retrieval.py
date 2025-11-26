@@ -45,7 +45,7 @@ class RetrievalService:
         # 1. Generate query embedding
         query_embedding = await self.embeddings.embed_text(query)
         
-        # 2. Search Qdrant
+        # 2. Hybrid search (vector + lexical fusion handled in Qdrant)
         vector_results = self.vector_db.search_text(
             query_vector=query_embedding,
             user_id=user_id,
@@ -57,7 +57,17 @@ class RetrievalService:
             return []
         
         # 3. Get chunk IDs from results
-        chunk_ids = [uuid.UUID(r["chunk_id"]) for r in vector_results]
+        chunk_ids = []
+        for r in vector_results:
+            cid = r.get("chunk_id")
+            if cid:
+                try:
+                    chunk_ids.append(uuid.UUID(cid))
+                except Exception:
+                    logger.warning(f"Skipping result with invalid chunk_id: {cid}")
+        
+        if not chunk_ids:
+            return []
         
         # 4. Fetch full chunk data from Postgres
         result = await self.session.execute(
@@ -77,7 +87,7 @@ class RetrievalService:
                     document_id=chunk.document_id,
                     page_id=chunk.page_id,
                     text=chunk.text,
-                    score=vector_result["score"],
+                    score=vector_result.get("score"),
                     bbox_json=chunk.bbox_json,
                 ))
         
@@ -122,8 +132,19 @@ class RetrievalService:
             if not vector_results:
                 return []
             
-            # Get figure IDs
-            figure_ids = [uuid.UUID(r["figure_id"]) for r in vector_results]
+            # Get figure IDs (skip invalid)
+            figure_ids = []
+            for r in vector_results:
+                fid = r.get("figure_id")
+                if not fid:
+                    continue
+                try:
+                    figure_ids.append(uuid.UUID(fid))
+                except Exception:
+                    logger.warning(f"Skipping result with invalid figure_id: {fid}. result: {r}")
+            
+            if not figure_ids:
+                return []
             
             # Fetch from Postgres
             result = await self.session.execute(

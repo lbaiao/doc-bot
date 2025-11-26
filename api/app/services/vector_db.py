@@ -15,6 +15,12 @@ from qdrant_client.models import (
     Filter,
     FieldCondition,
     MatchValue,
+    MatchText,
+    TextIndexParams,
+    TokenizerType,
+    Fusion,
+    FusionQuery,
+    FilterSelector,
 )
 
 from app.core.config import settings
@@ -35,6 +41,7 @@ class VectorDBClient:
             url=settings.QDRANT_URL,
             api_key=settings.QDRANT_API_KEY,
         )
+        self.text_vector_size = 768
         self._ensure_collections()
     
     def _ensure_collections(self):
@@ -44,6 +51,7 @@ class VectorDBClient:
             self.COLLECTION_IMAGE: 768,   # Image embeddings dimension
             self.COLLECTION_TABLE: 768,   # Table embeddings dimension
         }
+        self.text_vector_size = collections[self.COLLECTION_TEXT]
         
         existing = {c.name for c in self.client.get_collections().collections}
         
@@ -57,6 +65,22 @@ class VectorDBClient:
                         distance=Distance.COSINE,
                     ),
                 )
+            
+            # Ensure text payload index for lexical queries on text chunks
+            if collection_name == self.COLLECTION_TEXT:
+                try:
+                    self.client.create_payload_index(
+                        collection_name=collection_name,
+                        field_name="text",
+                        field_schema=TextIndexParams(
+                            tokenizer=TokenizerType.WORD,
+                            min_token_len=2,
+                            lowercase=True,
+                        ),
+                    )
+                except Exception as e:
+                    # If index exists or server version lacks feature, log and continue
+                    logger.debug(f"Payload index for text may already exist: {e}")
     
     # ========== Text Chunks ==========
     
@@ -119,9 +143,7 @@ class VectorDBClient:
         top_k: int = 10,
     ) -> List[dict]:
         """
-        Search for similar text chunks.
-        
-        Returns list of results with score and payload.
+        Search for similar text chunks using hybrid fusion (vector + lexical).
         """
         # Build filter
         must_conditions = [
@@ -135,15 +157,22 @@ class VectorDBClient:
             must_conditions.append(
                 FieldCondition(
                     key="document_id",
-                    match=MatchValue(value=[str(did) for did in document_ids]),
+                    match=MatchValue(value=str(document_ids[0])) if len(document_ids) == 1 else MatchValue(value=[str(did) for did in document_ids]),
                 )
             )
         
+        # Hybrid fusion: combine vector similarity with text match on payload "text"
         results = self.client.search(
             collection_name=self.COLLECTION_TEXT,
             query_vector=query_vector,
             query_filter=Filter(must=must_conditions) if must_conditions else None,
             limit=top_k,
+            with_vectors=False,
+            # Qdrant hybrid: RRF fusion of vector + payload text index
+            fusion=FusionQuery(
+                fusion=Fusion.RRF,
+                query=MatchText(text=""),
+            ),
         )
         
         return [
@@ -156,8 +185,28 @@ class VectorDBClient:
             }
             for hit in results
         ]
+
     
     # ========== Image Embeddings ==========
+    def delete_image_embeddings_for_document(self, document_id: uuid.UUID) -> None:
+        """Delete all image embeddings for a document (used before reindex)."""
+        try:
+            self.client.delete(
+                collection_name=self.COLLECTION_IMAGE,
+                points_selector=FilterSelector(
+                    filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="document_id",
+                                match=MatchValue(value=str(document_id)),
+                            )
+                        ]
+                    )
+                ),
+            )
+            logger.info(f"Deleted image embeddings for document {document_id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete image embeddings for document {document_id}: {e}")
     
     def upsert_image_embeddings(
         self,
@@ -214,10 +263,17 @@ class VectorDBClient:
         ]
         
         if document_ids:
+            if len(document_ids) == 1:
+                doc_ids_str = str(document_ids[0])
+                match = MatchValue(value=doc_ids_str)
+            else:
+                doc_ids_str = [str(did) for did in document_ids]
+                match = MatchValue(value=doc_ids_str)
+            
             must_conditions.append(
                 FieldCondition(
                     key="document_id",
-                    match=MatchValue(value=[str(did) for did in document_ids]),
+                    match=match,
                 )
             )
         

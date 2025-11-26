@@ -71,8 +71,8 @@ async def upload_document(
     session.add(document)
     await session.commit()
     
-    # TODO: Enqueue ETL task - wire to Celery
-    # await ingestion.ingest_document(doc_id)
+    # Run ingestion inline for now so pages/figures/tables are available after upload
+    await ingestion.ingest_document(doc_id)
     
     return UploadResult(document_id=doc_id)
 
@@ -244,7 +244,7 @@ async def reindex_document(
     document.status = "ingesting"
     await session.commit()
     
-    # TODO: Enqueue ETL task - wire to Celery
-    # await ingestion.ingest_document(document_id)
+    # Run ingestion inline
+    await ingestion.ingest_document(document_id)
     
     return {"message": "Reindexing started"}

@@ -24,6 +24,7 @@ class EmbeddingsService:
         # Initialize HuggingFace embeddings (same as analyzer/faiss_wrapper.py)
         self.embeddings = HuggingFaceEmbeddings(
             model_name=self.model_name,
+            model_kwargs={"trust_remote_code": True},
             encode_kwargs={"normalize_embeddings": True}
         )
     

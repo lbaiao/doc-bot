@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class TextSearchRequest(BaseModel):
@@ -14,6 +14,14 @@ class ImageSearchRequest(BaseModel):
     query_text: Optional[str] = None
     image_id: Optional[uuid.UUID] = None
     top_k: int = 10
+    
+    # Allow clients to pass empty string for image_id when doing text-only search
+    @field_validator("image_id", mode="before")
+    @classmethod
+    def empty_string_to_none(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
 
 class TableSearchRequest(BaseModel):

@@ -20,7 +20,8 @@ class ChatOut(BaseModel):
 
 
 class MessageIn(BaseModel):
-    content: dict
+    # Accept either plain text or structured payloads
+    content: str | dict
 
 
 class MessageOut(BaseModel):

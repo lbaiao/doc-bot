@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import pandas as pd
 
+from analyzer.config import default_config
 from app.services.storage import StorageService
 from app.services.embeddings import EmbeddingsService
 from app.services.vector_db import get_vector_db
@@ -164,30 +165,36 @@ class IngestionService:
         logger.info("Processing text chunks...")
         
         # Read chunk files
-        chunk_dir = os.path.join(extractor.output_dir, "chunks")
+        chunk_dir = os.path.join(extractor.output_dir, default_config.EXTRACTION_CHUNK_DIR)
         if not os.path.exists(chunk_dir):
             logger.warning(f"Chunk directory not found: {chunk_dir}")
             return
         
         chunk_files = sorted([f for f in os.listdir(chunk_dir) if f.endswith(".txt")])
         
-        chunks_data = []
-        chunk_texts = []
-        
+        chunk_records = []
         for chunk_file in chunk_files:
             chunk_path = os.path.join(chunk_dir, chunk_file)
             with open(chunk_path, "r", encoding="utf-8") as f:
                 text = f.read()
             
-            # Create chunk record
+            # Create chunk record (page mapping best-effort: first page)
+            page_obj = pages_map.get(0)
             chunk_obj = Chunk(
                 document_id=document.id,
-                page_id=pages_map[0].id,  # TODO: Better page mapping
+                page_id=page_obj.id if page_obj else None,
                 start_char=0,  # TODO: Track actual positions
                 end_char=len(text),
                 text=text,
             )
             self.session.add(chunk_obj)
+            chunk_records.append((chunk_obj, text))
+        
+        await self.session.flush()  # Assign chunk IDs
+        
+        chunks_data = []
+        chunk_texts = []
+        for chunk_obj, text in chunk_records:
             chunks_data.append({
                 "chunk_id": chunk_obj.id,
                 "text": text,
@@ -196,8 +203,6 @@ class IngestionService:
                 "end_char": chunk_obj.end_char,
             })
             chunk_texts.append(text)
-        
-        await self.session.flush()  # Get chunk IDs
         
         # Generate embeddings in batch
         if chunk_texts:
@@ -227,7 +232,7 @@ class IngestionService:
         
         df = pd.read_parquet(parquet_path)
         
-        figures_data = []
+        figure_records = []
         figure_captions = []
         
         for _, row in df.iterrows():
@@ -266,16 +271,23 @@ class IngestionService:
             )
             self.session.add(figure_obj)
             
-            # Store for embedding generation
-            figures_data.append({
-                "figure_id": figure_obj.id,
-                "page_id": figure_obj.page_id,
-                "caption": caption,
-                "storage_uri": storage_uri,
-            })
+            # Store for embedding generation (id assigned after flush)
+            figure_records.append((figure_obj, caption, storage_uri))
             figure_captions.append(caption or "image")  # Fallback if no caption
         
         await self.session.flush()  # Get figure IDs
+        
+        figures_data = []
+        for fig_obj, caption, storage_uri in figure_records:
+            figures_data.append({
+                "figure_id": fig_obj.id,
+                "page_id": fig_obj.page_id,
+                "caption": caption,
+                "storage_uri": storage_uri,
+            })
+        
+        # Clear old embeddings for this doc (avoids stale/None ids) then generate new
+        self.vector_db.delete_image_embeddings_for_document(document.id)
         
         # Generate embeddings for captions
         if figure_captions:
