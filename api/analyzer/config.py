@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 import os
 
 class Config(BaseSettings):
@@ -29,9 +29,7 @@ class Config(BaseSettings):
     IMAGE_UPLOAD_LIMIT: int = 20  # Maximum images to upload in one batch
 
     
-    class Config:
-        env_file = '.env'
-        case_sensitive = False  # Makes matching flexible
+    model_config = SettingsConfigDict(env_file='.env', case_sensitive=False)
 
 default_config = Config()
 

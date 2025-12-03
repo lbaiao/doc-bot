@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class ChatCreateIn(BaseModel):
@@ -15,8 +15,7 @@ class ChatOut(BaseModel):
     title: str
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MessageIn(BaseModel):
@@ -30,5 +29,4 @@ class MessageOut(BaseModel):
     content: dict
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

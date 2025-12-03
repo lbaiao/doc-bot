@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, ConfigDict
 
 
 class TextSearchRequest(BaseModel):
@@ -38,8 +38,7 @@ class ChunkHit(BaseModel):
     score: float
     bbox_json: Optional[dict] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FigureHit(BaseModel):
@@ -51,12 +50,11 @@ class FigureHit(BaseModel):
     score: float
     bbox_json: Optional[dict] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TableHit(BaseModel):
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
     
     table_id: uuid.UUID
     document_id: uuid.UUID

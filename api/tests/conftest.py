@@ -96,12 +96,6 @@ class FakeChatService(ChatService):
         return assistant_msg
 
 
-@pytest_asyncio.fixture(scope="session")
-def event_loop() -> Generator:
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest_asyncio.fixture
@@ -134,6 +128,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     def override_chat_service():
         return FakeChatService(db_session)
 
+    from httpx import AsyncClient, ASGITransport
     from app.main import create_app
 
     test_app = create_app()
@@ -142,7 +137,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     test_app.dependency_overrides[get_ingestion_service] = override_ingestion
     test_app.dependency_overrides[get_chat_service] = override_chat_service
 
-    async with AsyncClient(app=test_app, base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as ac:
         yield ac
     
     test_app.dependency_overrides.clear()

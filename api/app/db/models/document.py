@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text, JSON
@@ -21,7 +21,7 @@ class Document(Base):
     bytes_size: Mapped[int] = mapped_column(BigInteger)
     storage_uri: Mapped[str] = mapped_column(Text)
     hash_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     pages: Mapped[list["Page"]] = relationship(back_populates="document", cascade="all, delete-orphan")

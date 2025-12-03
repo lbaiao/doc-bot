@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class DocumentOut(BaseModel):
@@ -16,8 +16,7 @@ class DocumentOut(BaseModel):
     hash_sha256: Optional[str] = None
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PageOut(BaseModel):
@@ -28,8 +27,7 @@ class PageOut(BaseModel):
     height: float
     text: Optional[str] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FigureOut(BaseModel):
@@ -43,12 +41,11 @@ class FigureOut(BaseModel):
     storage_uri: Optional[str] = None
     phash: Optional[str] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TableOut(BaseModel):
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
     
     id: uuid.UUID
     document_id: uuid.UUID

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import DateTime, Integer, String, Text
@@ -17,7 +17,7 @@ class TextEmbedding(Base):
     dim: Mapped[int] = mapped_column(Integer)
     vector_id: Mapped[str] = mapped_column(Text)  # ID in vector DB
     score_meta: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class ImageEmbedding(Base):
@@ -28,7 +28,7 @@ class ImageEmbedding(Base):
     dim: Mapped[int] = mapped_column(Integer)
     vector_id: Mapped[str] = mapped_column(Text)  # ID in vector DB
     score_meta: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class TableEmbedding(Base):
@@ -39,4 +39,4 @@ class TableEmbedding(Base):
     dim: Mapped[int] = mapped_column(Integer)
     vector_id: Mapped[str] = mapped_column(Text)  # ID in vector DB
     score_meta: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
