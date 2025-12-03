@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/docbot"
+    DATABASE_URL: str = "postgresql+asyncpg://docbot:docbot_password@localhost:5432/docbot"
     
     # Auth
     SECRET_KEY: str = "CHANGE_ME_IN_PRODUCTION"
