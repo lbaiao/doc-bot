@@ -14,7 +14,6 @@ from typing import Any, List
 
 from langchain.tools import tool
 
-# Use DB-backed registry instead of file-based
 from session.db_registry import default_registry
 from analyzer.config import get_config
 
@@ -28,18 +27,15 @@ _registry = default_registry
 def _require_active_doc() -> str:
     _active_doc = _registry.get_active()
     if not _active_doc:
-        raise ValueError("No active document set. Call set_active_document(doc_file_name) first.")
+        raise ValueError("No active document set. Call set_active_document(document_id) first.")
     return _active_doc
 
 
 @tool
-def set_active_document(doc_file_name: str) -> str:
-    """Set the active PDF document context (use the extraction folder name, e.g. 'ID 35')."""
-    global _active_doc
-    _active_doc = doc_file_name
-    # Warm resources (lazy creation inside ensure)
-    _registry.ensure(doc_file_name)
-    return json.dumps({"status": "ok", "active_document": _active_doc})
+def set_active_document(document_id: str) -> str:
+    """Set the active document context by UUID (document_id from the API)."""
+    _registry.ensure(document_id)
+    return json.dumps({"status": "ok", "active_document": document_id})
 
 
 @tool

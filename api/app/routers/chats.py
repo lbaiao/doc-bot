@@ -105,29 +105,12 @@ async def post_message(
         raise HTTPException(status_code=404, detail="Chat not found")
     
     # Store user message
-    user_message = Message(
+    # Delegate to chat service (persists user/assistant messages)
+    assistant_message = await chat_service.post_message(
         chat_id=chat_id,
-        role="user",
+        user_id=current_user.id,
         content=message_in.content,
     )
-    session.add(user_message)
-    await session.commit()
-    
-    # TODO: Call agent service to get response
-    # assistant_message = await chat_service.post_message(chat_id, current_user.id, message_in.content)
-    
-    # For now, create a stub response
-    assistant_message = Message(
-        chat_id=chat_id,
-        role="assistant",
-        content={
-            "text": "TODO: Wire to agent service. This is a placeholder response."
-        },
-    )
-    session.add(assistant_message)
-    await session.commit()
-    await session.refresh(assistant_message)
-    
     return assistant_message
 
 

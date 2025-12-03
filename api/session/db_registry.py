@@ -15,11 +15,13 @@ import uuid
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import asyncio
+import concurrent.futures
+import threading
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.document import Document, Chunk, Figure
+from app.db.models.document import Document, Chunk as ChunkModel, Figure as FigureModel
 from app.services.vector_db import get_vector_db
 from app.services.embeddings import EmbeddingsService
 from app.services.storage import get_storage_service
@@ -30,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # --------- Data models (same as old registry) ---------
 @dataclass
-class Chunk:
+class ChunkRecord:
     chunk_id: str
     text: str
     metadata: Dict[str, Any]
@@ -62,6 +64,8 @@ class DBSessionRegistry:
         self._storage = None
         self._active_session: Optional[uuid.UUID] = None  # Track by document UUID
         self._active_user: Optional[uuid.UUID] = None
+        self._main_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._main_loop_thread: Optional[threading.Thread] = None
     
     @property
     def vector_db(self):
@@ -83,6 +87,25 @@ class DBSessionRegistry:
         if self._storage is None:
             self._storage = get_storage_service()
         return self._storage
+
+    def set_main_loop(self, loop: asyncio.AbstractEventLoop):
+        """Capture the main event loop so background threads can schedule work on it."""
+        self._main_loop = loop
+        self._main_loop_thread = threading.current_thread()
+
+    def _run_sync(self, coro):
+        """Run an async coroutine safely from sync code, regardless of loop state."""
+        if self._main_loop and self._main_loop.is_running() and threading.current_thread() != self._main_loop_thread:
+            # Schedule on the captured main loop from a background thread
+            return asyncio.run_coroutine_threadsafe(coro, self._main_loop).result()
+
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
     
     def set_active(self, document_id: str):
         """Set active document by ID (UUID string)."""
@@ -125,15 +148,7 @@ class DBSessionRegistry:
                         raise ValueError(f"Document {document_id} not ready (status: {doc.status})")
                     return doc
             
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If called from async context, create new loop in thread
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, check_exists())
-                    doc = future.result()
-            else:
-                doc = asyncio.run(check_exists())
+            doc = self._run_sync(check_exists())
             
             self.set_active(document_id)
             if doc.owner_id:
@@ -168,9 +183,9 @@ class DBSessionRegistry:
                     from sqlalchemy import func
                     
                     result = await session.execute(
-                        select(Chunk)
-                        .where(Chunk.document_id == doc_uuid)
-                        .where(Chunk.text.ilike(f"%{query}%"))  # Simple ILIKE for now
+                        select(ChunkModel)
+                        .where(ChunkModel.document_id == doc_uuid)
+                        .where(ChunkModel.text.ilike(f"%{query}%"))  # Simple ILIKE for now
                         .limit(limit)
                     )
                     chunks = result.scalars().all()
@@ -192,14 +207,7 @@ class DBSessionRegistry:
                 
                 return []
         
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, do_search())
-                return future.result()
-        else:
-            return asyncio.run(do_search())
+        return self._run_sync(do_search())
     
     def search_vector(
         self,
@@ -232,7 +240,7 @@ class DBSessionRegistry:
             
             async with async_session_maker() as session:
                 result = await session.execute(
-                    select(Chunk).where(Chunk.id.in_(chunk_ids))
+                    select(ChunkModel).where(ChunkModel.id.in_(chunk_ids))
                 )
                 chunks_db = {str(c.id): c for c in result.scalars().all()}
             
@@ -258,14 +266,7 @@ class DBSessionRegistry:
             
             return hits
         
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, do_search())
-                return future.result()
-        else:
-            return asyncio.run(do_search())
+        return self._run_sync(do_search())
     
     def search_image_captions(
         self,
@@ -326,14 +327,7 @@ class DBSessionRegistry:
             
             return hits
         
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, do_search())
-                return future.result()
-        else:
-            return asyncio.run(do_search())
+        return self._run_sync(do_search())
     
     def hybrid_search(
         self,
@@ -379,7 +373,7 @@ class DBSessionRegistry:
         self,
         document_id: str,
         chunk_ids: List[str]
-    ) -> List[Chunk]:
+    ) -> List[ChunkRecord]:
         """
         Fetch full chunk texts by IDs.
         
@@ -403,15 +397,15 @@ class DBSessionRegistry:
             
             async with async_session_maker() as session:
                 result = await session.execute(
-                    select(Chunk)
-                    .where(Chunk.document_id == doc_uuid)
-                    .where(Chunk.id.in_(chunk_uuids))
+                    select(ChunkModel)
+                    .where(ChunkModel.document_id == doc_uuid)
+                    .where(ChunkModel.id.in_(chunk_uuids))
                 )
                 chunks_db = result.scalars().all()
                 
                 # Convert to old Chunk dataclass format
                 return [
-                    Chunk(
+                    ChunkRecord(
                         chunk_id=str(c.id),
                         text=c.text,
                         metadata={
@@ -422,14 +416,7 @@ class DBSessionRegistry:
                     for c in chunks_db
                 ]
         
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, do_fetch())
-                return future.result()
-        else:
-            return asyncio.run(do_fetch())
+        return self._run_sync(do_fetch())
     
     def upload_images_to_anthropic(
         self,
@@ -449,9 +436,9 @@ class DBSessionRegistry:
             
             async with async_session_maker() as session:
                 result = await session.execute(
-                    select(Figure)
-                    .where(Figure.document_id == doc_uuid)
-                    .where(Figure.id.in_(figure_uuids))
+                    select(FigureModel)
+                    .where(FigureModel.document_id == doc_uuid)
+                    .where(FigureModel.id.in_(figure_uuids))
                 )
                 figures = result.scalars().all()
             
@@ -475,14 +462,7 @@ class DBSessionRegistry:
                 "images": uploaded,
             }
         
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, do_upload())
-                return future.result()
-        else:
-            return asyncio.run(do_upload())
+        return self._run_sync(do_upload())
 
 
 # Global registry instance

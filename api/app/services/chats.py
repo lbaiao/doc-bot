@@ -34,7 +34,7 @@ class ChatService:
         self,
         chat_id: uuid.UUID,
         user_id: uuid.UUID,
-        content: dict
+        content: dict | str
     ) -> Message:
         """
         Post a user message and orchestrate agent response.
@@ -58,11 +58,16 @@ class ChatService:
         if not chat:
             raise ValueError(f"Chat {chat_id} not found or access denied")
         
-        # 2. Store user message
+        # 2. Normalize content and store user message
+        user_text = content.get("text") if isinstance(content, dict) else str(content)
+        document_id = None
+        if isinstance(content, dict):
+            document_id = content.get("document_id") or content.get("doc_id")
+        
         user_message = Message(
             chat_id=chat_id,
             role="user",
-            content=content,
+            content={"text": user_text, "document_id": document_id} if user_text is not None else {"document_id": document_id},
         )
         self.session.add(user_message)
         await self.session.flush()
@@ -78,38 +83,48 @@ class ChatService:
         
         # 4. Build messages for agent
         agent_messages = []
-        for msg in history[:-1]:  # Exclude the message we just added
+        # Build agent messages (include a system primer)
+        agent_messages.append({
+            "role": "system",
+            "content": "You are a document QA assistant. Use the provided tools to search documents and answer clearly.",
+        })
+        for msg in history:
+            text_content = msg.content.get("text") if isinstance(msg.content, dict) else str(msg.content)
             agent_messages.append({
                 "role": msg.role,
-                "content": msg.content.get("text", "") if isinstance(msg.content, dict) else str(msg.content)
+                "content": text_content or "",
             })
-        
-        # Add the new user message
-        user_text = content.get("text", "") if isinstance(content, dict) else str(content)
-        agent_messages.append({
-            "role": "user",
-            "content": user_text
-        })
         
         # 5. Set up agent context (user + document)
         from session.db_registry import default_registry
+        # Capture the main loop so registry can schedule coroutines from background threads
+        default_registry.set_main_loop(asyncio.get_running_loop())
         default_registry.set_user(user_id)
-        
-        # TODO: If chat has associated documents, set active document
-        # For now, agent tools will need document_id passed explicitly
+        if document_id:
+            try:
+                default_registry.ensure(str(document_id))
+            except Exception as e:
+                logger.warning(f"Could not set active document {document_id}: {e}")
         
         # 6. Call agent in executor (agent is sync)
         try:
             logger.info(f"Calling agent with message: {user_text[:100]}")
             
             agent = self._get_agent()
-            loop = asyncio.get_event_loop()
-            
+            loop = asyncio.get_running_loop()
+
+            def invoke_agent():
+                # Agent may call asyncio.get_event_loop; ensure one exists in this worker thread
+                thread_loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(thread_loop)
+                    return agent.invoke({"messages": agent_messages})
+                finally:
+                    asyncio.set_event_loop(None)
+                    thread_loop.close()
+
             # Run agent in executor since it's synchronous
-            agent_response = await loop.run_in_executor(
-                None,
-                lambda: agent.invoke({"messages": agent_messages})
-            )
+            agent_response = await loop.run_in_executor(None, invoke_agent)
             
             logger.info(f"Agent response received")
             
@@ -152,7 +167,10 @@ class ChatService:
             
         except Exception as e:
             logger.error(f"Error calling agent: {e}", exc_info=True)
-            
+            try:
+                await self.session.rollback()
+            except Exception as rollback_err:
+                logger.warning(f"Rollback failed after agent error: {rollback_err}")
             # Store error message
             error_message = Message(
                 chat_id=chat_id,

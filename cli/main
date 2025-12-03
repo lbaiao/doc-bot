@@ -1,0 +1,13 @@
+#!/usr/bin/env python
+"""Convenience wrapper so you can run `python main` from inside cli/."""
+
+from pathlib import Path
+import runpy
+import sys
+
+if __name__ == "__main__":
+    # Ensure both the cli package and project root are importable.
+    cli_dir = Path(__file__).resolve().parent
+    sys.path.insert(0, str(cli_dir.parent))
+    sys.path.insert(0, str(cli_dir))
+    runpy.run_module("cli.main", run_name="__main__")
