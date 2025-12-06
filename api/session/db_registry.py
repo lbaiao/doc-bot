@@ -15,11 +15,9 @@ import uuid
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import asyncio
-import concurrent.futures
 import threading
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.document import Document, Chunk as ChunkModel, Figure as FigureModel
 from app.services.vector_db import get_vector_db
@@ -298,7 +296,7 @@ class DBSessionRegistry:
             
             async with async_session_maker() as session:
                 result = await session.execute(
-                    select(Figure).where(Figure.id.in_(figure_ids))
+                    select(FigureModel).where(FigureModel.id.in_(figure_ids))
                 )
                 figures_db = {str(f.id): f for f in result.scalars().all()}
             

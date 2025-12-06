@@ -43,6 +43,7 @@ class FigureImageMetadata:
     caption: str
     width: int
     height: int
+    metadata: Dict
 
     def to_record(self) -> Dict[str, Any]:
         """Return a dict following the canonical column names."""

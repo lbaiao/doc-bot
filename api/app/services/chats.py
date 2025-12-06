@@ -1,7 +1,6 @@
 import uuid
 import logging
 import asyncio
-from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select

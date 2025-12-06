@@ -19,13 +19,14 @@ app = typer.Typer(help="DocBot CLI")
 console = Console()
 DEFAULT_EMAIL = "admin@example.com"
 DEFAULT_PASSWORD = "changeme123!"
+TIMEOUT = 180.0
 
 
 def get_client(base_url: str, token: Optional[str]) -> httpx.Client:
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    return httpx.Client(base_url=base_url, headers=headers, timeout=30.0)
+    return httpx.Client(base_url=base_url, headers=headers, timeout=TIMEOUT)
 
 
 def print_json(data) -> None:
@@ -43,7 +44,7 @@ def resolve_config(base_url: Optional[str], token: Optional[str]) -> CLIConfig:
 
 def request_token(base_url: str, email: str, password: str) -> str:
     """Perform login against the API and return the access token."""
-    with httpx.Client(base_url=base_url, timeout=30.0) as client:
+    with httpx.Client(base_url=base_url, timeout=TIMEOUT) as client:
         resp = client.post(
             "/v1/auth/jwt/login",
             data={"username": email, "password": password},
