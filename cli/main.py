@@ -22,11 +22,52 @@ DEFAULT_PASSWORD = "changeme123!"
 TIMEOUT = 180.0
 
 
-def get_client(base_url: str, token: Optional[str]) -> httpx.Client:
-    headers = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return httpx.Client(base_url=base_url, headers=headers, timeout=TIMEOUT)
+class AutoRefreshClient:
+    def __init__(self, cfg: CLIConfig):
+        self.cfg = cfg
+        headers = {}
+        if cfg.token:
+            headers["Authorization"] = f"Bearer {cfg.token}"
+        self.client = httpx.Client(base_url=cfg.base_url, headers=headers, timeout=TIMEOUT)
+
+    def __enter__(self):
+        self.client.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.client.__exit__(exc_type, exc_val, exc_tb)
+
+    def request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        resp = self.client.request(method, url, **kwargs)
+        if resp.status_code == 401 and self.cfg.email and self.cfg.password:
+            typer.echo("Token expired or unauthorized. Attempting to refresh token...", err=True)
+            try:
+                # request_token raises typer.Exit on failure, which is fine (program stops)
+                new_token = request_token(self.cfg.base_url, self.cfg.email, self.cfg.password)
+                self.cfg.token = new_token
+                save_config(self.cfg)
+                self.client.headers["Authorization"] = f"Bearer {new_token}"
+                # Retry the request
+                resp = self.client.request(method, url, **kwargs)
+            except typer.Exit:
+                # If login failed, we just return the original 401 response so the command can handle it 
+                # or let the Exit propagate? request_token prints error then raises Exit.
+                # If we let it propagate, the program exits. That's good.
+                raise
+            except Exception:
+                # Other errors, return original response
+                pass
+        return resp
+
+    def get(self, url: str, **kwargs) -> httpx.Response:
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url: str, **kwargs) -> httpx.Response:
+        return self.request("POST", url, **kwargs)
+
+
+def get_client(cfg: CLIConfig) -> AutoRefreshClient:
+    return AutoRefreshClient(cfg)
 
 
 def print_json(data) -> None:
@@ -68,6 +109,8 @@ def login_default_if_needed(cfg: CLIConfig, base_url: Optional[str], use_default
     token = request_token(target_base, DEFAULT_EMAIL, DEFAULT_PASSWORD)
     cfg.base_url = target_base
     cfg.token = token
+    cfg.email = DEFAULT_EMAIL
+    cfg.password = DEFAULT_PASSWORD
     save_config(cfg)
     typer.echo(f"Logged in with default user: {DEFAULT_EMAIL}")
     return cfg
@@ -97,6 +140,8 @@ def login(
     cfg = resolve_config(base_url, None)
     token = request_token(cfg.base_url, email, password)
     cfg.token = token
+    cfg.email = email
+    cfg.password = password
     save_config(cfg)
     typer.echo("Login successful; token saved.")
 
@@ -109,7 +154,7 @@ def upload(
 ):
     """Upload a PDF; returns document_id."""
     cfg = resolve_config(base_url, token)
-    with get_client(cfg.base_url, cfg.token) as client, pdf_path.open("rb") as f:
+    with get_client(cfg) as client, pdf_path.open("rb") as f:
         files = {"file": (pdf_path.name, f, "application/pdf")}
         resp = client.post("/v1/documents:upload", files=files)
         if resp.status_code != 202:
@@ -126,7 +171,7 @@ def status(
 ):
     """Fetch document status/metadata."""
     cfg = resolve_config(base_url, token)
-    with get_client(cfg.base_url, cfg.token) as client:
+    with get_client(cfg) as client:
         resp = client.get(f"/v1/documents/{document_id}")
         if resp.status_code != 200:
             typer.echo(f"Status failed: {resp.status_code} {resp.text}", err=True)
@@ -147,7 +192,7 @@ def search_text(
     payload = {"query": query, "top_k": top_k}
     if document_ids:
         payload["document_ids"] = document_ids
-    with get_client(cfg.base_url, cfg.token) as client:
+    with get_client(cfg) as client:
         resp = client.post("/v1/search/text", json=payload)
         if resp.status_code != 200:
             typer.echo(f"Search failed: {resp.status_code} {resp.text}", err=True)
@@ -165,7 +210,7 @@ def search_image(
     """Caption-based image search."""
     cfg = resolve_config(base_url, token)
     payload = {"query_text": query_text, "top_k": top_k}
-    with get_client(cfg.base_url, cfg.token) as client:
+    with get_client(cfg) as client:
         resp = client.post("/v1/search/image", json=payload)
         if resp.status_code != 200:
             typer.echo(f"Search failed: {resp.status_code} {resp.text}", err=True)
@@ -183,7 +228,7 @@ def search_table(
     """Semantic table search."""
     cfg = resolve_config(base_url, token)
     payload = {"query": query, "top_k": top_k}
-    with get_client(cfg.base_url, cfg.token) as client:
+    with get_client(cfg) as client:
         resp = client.post("/v1/search/table", json=payload)
         if resp.status_code != 200:
             typer.echo(f"Search failed: {resp.status_code} {resp.text}", err=True)
@@ -202,7 +247,7 @@ def chat_create(
     cfg = resolve_config(base_url, token)
     cfg = login_default_if_needed(cfg, base_url, use_default)
     payload = {"title": title} if title else {}
-    with get_client(cfg.base_url, cfg.token) as client:
+    with get_client(cfg) as client:
         resp = client.post("/v1/chats", json=payload)
         if resp.status_code != 201:
             typer.echo(f"Chat create failed: {resp.status_code} {resp.text}", err=True)
@@ -222,7 +267,7 @@ def chat_send(
     cfg = resolve_config(base_url, token)
     cfg = login_default_if_needed(cfg, base_url, use_default)
     payload = {"content": message}
-    with get_client(cfg.base_url, cfg.token) as client:
+    with get_client(cfg) as client:
         resp = client.post(f"/v1/chats/{chat_id}/messages", json=payload)
         if resp.status_code != 201:
             typer.echo(f"Chat send failed: {resp.status_code} {resp.text}", err=True)
@@ -242,7 +287,7 @@ def chat_history(
     cfg = resolve_config(base_url, token)
     cfg = login_default_if_needed(cfg, base_url, use_default)
     params = {"limit": limit}
-    with get_client(cfg.base_url, cfg.token) as client:
+    with get_client(cfg) as client:
         resp = client.get(f"/v1/chats/{chat_id}/messages", params=params)
         if resp.status_code != 200:
             typer.echo(f"Chat history failed: {resp.status_code} {resp.text}", err=True)
@@ -254,7 +299,7 @@ def chat_history(
 def chat_loop(
     chat_id: Optional[uuid.UUID] = typer.Option(None, help="Existing chat ID; if omitted, a new chat is created"),
     title: Optional[str] = typer.Option(None, help="Title when creating a new chat"),
-    show_thoughts: bool = typer.Option(False, help="Display agent/tool thinking if available"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Display agent thinking and tool outputs"),
     document_id: Optional[uuid.UUID] = typer.Option(None, help="Optional document_id to send with each message"),
     base_url: Optional[str] = typer.Option(None, help="API base URL"),
     token: Optional[str] = typer.Option(None, help="Override token"),
@@ -264,11 +309,11 @@ def chat_loop(
     Interactive terminal chat with the backend chat API.
 
     - If chat_id is omitted, creates a new chat first.
-    - show_thoughts toggles display of tool/agent reasoning when returned by the API (stubbed until implemented).
+    - verbose toggles display of tool/agent reasoning.
     """
     cfg = resolve_config(base_url, token)
     cfg = login_default_if_needed(cfg, base_url, use_default)
-    client = get_client(cfg.base_url, cfg.token)
+    client = get_client(cfg)
 
     def ensure_chat() -> uuid.UUID:
         if chat_id:
@@ -299,14 +344,35 @@ def chat_loop(
                 continue
             data = resp.json()
             content = data.get("content")
+            tool_runs = data.get("tool_runs", [])
+            
+            # 1. Show thoughts if verbose
+            if verbose and isinstance(content, dict):
+                thoughts = content.get("thoughts")
+                if thoughts:
+                    console.print(Markdown(f"> **Thinking:**\n{thoughts}"), style="dim yellow")
+            
+            # 2. Show tool outputs if verbose
+            if verbose and tool_runs:
+                console.print("[bold blue]Tool Output:[/bold blue]")
+                for tr in tool_runs:
+                    name = tr.get("tool_name", "unknown")
+                    args = tr.get("request_payload")
+                    output = tr.get("response_payload", {}).get("output")
+                    
+                    # Format output
+                    output_str = str(output)
+                    if len(output_str) > 400:
+                        output_str = output_str[:400] + "... (truncated)"
+                    
+                    console.print(f"  [cyan]{name}[/cyan]({json.dumps(args) if args else ''}) -> {output_str}", style="blue")
+
+            # 3. Show assistant response
             if isinstance(content, dict):
-                rendered = json.dumps(content, indent=2)
-                console.print(Markdown(f"**Assistant:**\n```\n{rendered}\n```"))
+                text = content.get("text", "")
+                console.print(Markdown(f"**Assistant:**\n{text}"))
             else:
                 console.print(Markdown(f"**Assistant:** {content}"))
-
-            if show_thoughts and isinstance(content, dict) and "thoughts" in content:
-                console.print(Markdown(f"> Thoughts: {content['thoughts']}"))
 
     except KeyboardInterrupt:
         console.print("\n[cyan]Bye![/cyan]")

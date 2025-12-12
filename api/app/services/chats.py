@@ -127,39 +127,86 @@ class ChatService:
             
             logger.info(f"Agent response received")
             
-            # Extract response text
+            # Extract response text, thoughts, and tool runs
+            response_text = ""
+            thoughts = []
+            tool_runs_data = []
+            
             if isinstance(agent_response, dict) and "messages" in agent_response:
-                last_message = agent_response["messages"][-1]
-                response_text = last_message.get("content", "") if isinstance(last_message, dict) else str(last_message)
+                # LangGraph state: list of messages
+                all_messages = agent_response["messages"]
+                
+                # Identify new messages (those not in history)
+                # Simple heuristic: skip the number of messages we sent
+                # Note: This assumes agent appends to the list. 
+                # A more robust way would be to track IDs, but LangChain messages might not have IDs preserved/generated same way.
+                # For now, we'll iterate through all and look for AI messages that are NOT the final response or have tool calls.
+                
+                # Actually, let's just look at the last few messages that are NOT from the user history we sent.
+                # We sent `len(agent_messages)` messages.
+                new_messages = all_messages[len(agent_messages):]
+                
+                from langchain_core.messages import AIMessage, ToolMessage
+                
+                for msg in new_messages:
+                    if isinstance(msg, AIMessage):
+                        # Check if it has tool calls
+                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+                            # This is an intermediate step (thought + tool call)
+                            if isinstance(msg.content, str) and msg.content.strip():
+                                thoughts.append(msg.content)
+                            
+                            # Track tool calls to match with outputs later
+                            for tc in msg.tool_calls:
+                                tool_runs_data.append({
+                                    "id": tc["id"],
+                                    "name": tc["name"],
+                                    "args": tc["args"],
+                                    "output": None # Will fill from ToolMessage
+                                })
+                        else:
+                            # Likely the final response
+                            response_text = msg.content if isinstance(msg.content, str) else str(msg.content)
+                            
+                    elif isinstance(msg, ToolMessage):
+                        # Find matching tool run
+                        for tr in tool_runs_data:
+                            if tr["id"] == msg.tool_call_id:
+                                tr["output"] = msg.content
+                                break
             else:
+                # Fallback for simple chains
                 response_text = str(agent_response)
             
             # 6. Store assistant message
             assistant_message = Message(
                 chat_id=chat_id,
                 role="assistant",
-                content={"text": response_text},
+                content={
+                    "text": response_text,
+                    "thoughts": "\n\n".join(thoughts) if thoughts else None
+                },
             )
             self.session.add(assistant_message)
+            await self.session.flush() # Get ID
             
-            # 7. Store tool runs if available
-            # TODO: Extract tool invocations from agent response
-            # For now, this is a simplified version
-            if isinstance(agent_response, dict) and "tool_calls" in agent_response:
-                for tool_call in agent_response["tool_calls"]:
-                    tool_run = ToolRun(
-                        chat_id=chat_id,
-                        message_id=assistant_message.id,
-                        tool_name=tool_call.get("name", "unknown"),
-                        status="completed",
-                        request_payload=tool_call.get("args"),
-                        response_payload=tool_call.get("result"),
-                        latency_ms=0,  # TODO: Track actual latency
-                    )
-                    self.session.add(tool_run)
+            # 7. Store tool runs
+            for tr in tool_runs_data:
+                tool_run = ToolRun(
+                    chat_id=chat_id,
+                    message_id=assistant_message.id,
+                    tool_name=tr["name"],
+                    status="completed",
+                    request_payload=tr["args"],
+                    response_payload={"output": tr["output"]}, # Wrap to match schema expectation if needed, or just store raw
+                    latency_ms=0, 
+                )
+                self.session.add(tool_run)
             
             await self.session.commit()
-            await self.session.refresh(assistant_message)
+            # Eager load tool_runs for the response
+            # We need to refresh to get the relationship populated
+            await self.session.refresh(assistant_message, ["tool_runs"])
             
             logger.info(f"Assistant message stored: {assistant_message.id}")
             return assistant_message

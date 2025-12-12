@@ -11,6 +11,8 @@ CONFIG_PATH = Path.home() / ".docbot" / "config.json"
 class CLIConfig:
     base_url: str = DEFAULT_BASE_URL
     token: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
 
 
 def load_config() -> CLIConfig:
@@ -21,6 +23,8 @@ def load_config() -> CLIConfig:
             return CLIConfig(
                 base_url=data.get("base_url", DEFAULT_BASE_URL),
                 token=data.get("token"),
+                email=data.get("email"),
+                password=data.get("password"),
             )
     except Exception:
         pass
@@ -30,5 +34,15 @@ def load_config() -> CLIConfig:
 def save_config(cfg: CLIConfig) -> None:
     """Persist config to disk with 600 perms."""
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps({"base_url": cfg.base_url, "token": cfg.token}, indent=2))
+    CONFIG_PATH.write_text(
+        json.dumps(
+            {
+                "base_url": cfg.base_url,
+                "token": cfg.token,
+                "email": cfg.email,
+                "password": cfg.password,
+            },
+            indent=2,
+        )
+    )
     CONFIG_PATH.chmod(0o600)
