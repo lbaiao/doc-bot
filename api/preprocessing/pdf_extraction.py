@@ -2,7 +2,7 @@ import pymupdf
 import os
 import logging
 import uuid
-from typing import Tuple
+from typing import Tuple, List
 import pandas as pd
 from analyzer.config import default_config
 from analyzer.schemas import FigureImageCols as FIC, FigureImageMetadata
@@ -167,7 +167,7 @@ class PdfExtractor:
         
         logger.info(f"Text extraction complete: {page_count} pages extracted to {self.text_path}")
 
-    def extract_bitmap_images(self):
+    def _legacy_extract_bitmap_images(self):
         logger.info(f"Starting bitmap image extraction from {self.file_name}")
         doc = self.doc
         
@@ -247,7 +247,7 @@ class PdfExtractor:
         
         logger.info(f"Bitmap image extraction complete: {total_images} images extracted to {self.images_dir}")
 
-    def extract_vector_graphics(self):
+    def _legacy_extract_vector_graphics(self):
         logger.info(f"Starting vector graphics extraction from {self.file_name}")
         doc = self.doc
 
@@ -320,11 +320,107 @@ class PdfExtractor:
             logger.error(f"FAISS embedding extraction failed for {self.file_name}: {e}")
         
         logger.info(f"FAISS embedding extraction complete for {self.file_name}")
+        
+    @staticmethod
+    def render_page_crop(page: pymupdf.Page, bbox_2d: List[int], dpi: int = 300) -> pymupdf.Pixmap:
+        """
+        Render a crop of a page based on a 0-1000 scale bounding box.
+        """
+        page_width = page.rect.width
+        page_height = page.rect.height
+        
+        x0 = (bbox_2d[0] / 1000.0) * page_width
+        y0 = (bbox_2d[1] / 1000.0) * page_height
+        x1 = (bbox_2d[2] / 1000.0) * page_width
+        y1 = (bbox_2d[3] / 1000.0) * page_height
+        
+        crop_rect = pymupdf.Rect(x0, y0, x1, y1)
+        return page.get_pixmap(clip=crop_rect, dpi=dpi)
+
+    def extract_figures_smart(self):
+        """
+        Extract figures using Vision LLM (SmartPageExtractor).
+        Replaces both bitmap and vector extraction with a unified AI approach.
+        """
+        logger.info(f"Starting Smart Scan extraction for {self.file_name}")
+        
+        from preprocessing.smart_extractor import SmartPageExtractor
+        from analyzer.config import default_config
+        
+        # Initialize Smart Extractor with configured model
+        smart_extractor = SmartPageExtractor(
+            model_name=default_config.VISION_LLM_MODEL,
+            api_key=default_config.ANTHROPIC_API_KEY
+        )
+        
+        doc = self.doc
+        image_data = []
+        total_figures = 0
+        
+        for page_index in range(len(doc)):
+            page = doc[page_index]
+            logger.info(f"Smart scanning page {page_index + 1}/{len(doc)}...")
+            
+            try:
+                # 1. AI Analysis
+                result = smart_extractor.extract_from_page(page)
+                
+                if not result.figures:
+                    logger.info(f"No figures found on page {page_index + 1}")
+                    continue
+                
+                # 2. Process each detected figure
+                for i, fig in enumerate(result.figures, start=1):
+                    # 3. Crop and Save Image
+                    # Use higher DPI for better quality
+                    pix = self.render_page_crop(page, fig.bbox_2d, dpi=300)
+                    
+                    filename = f"page_{page_index}_figure_{i}.png"
+                    os.makedirs(self.images_dir, exist_ok=True)
+                    output_path = os.path.join(self.images_dir, filename)
+                    pix.save(output_path)
+                    
+                    # 4. Store Metadata
+                    record = FigureImageMetadata(
+                        id=str(uuid.uuid4()),
+                        page_index=page_index,
+                        image_index=i,
+                        image_path=output_path,
+                        has_caption=True, # AI always returns a caption field
+                        caption=fig.caption,
+                        width=pix.width,
+                        height=pix.height,
+                        metadata={
+                            "label": fig.label,
+                            "description": fig.description,
+                            "type": fig.type,
+                            "source": "smart_scan"
+                        }
+                    )
+                    image_data.append(record.to_record())
+                    total_figures += 1
+                    logger.info(f"Extracted {fig.label}: {output_path}")
+                    
+            except Exception as e:
+                logger.error(f"Failed to smart scan page {page_index + 1}: {e}")
+                # Continue to next page instead of failing everything
+                continue
+
+        # Save metadata to parquet file
+        if image_data:
+            df = pd.DataFrame(image_data)
+            df.to_parquet(self.parquet_path, index=False)
+            logger.info(f"Saved smart scan metadata to {self.parquet_path}")
+        
+        logger.info(f"Smart Scan complete: {total_figures} figures extracted to {self.images_dir}")
 
     def extract_all(self):
         self.extract_text()
-        self.extract_bitmap_images()
-        self.extract_vector_graphics()
+        # Use Smart Scan instead of legacy methods
+        # self._legacy_extract_bitmap_images()
+        # self._legacy_extract_vector_graphics()
+        self.extract_figures_smart()
+        
         self.extract_text_chunks()
         # Build Lucene-style index for this PDF's extracted artifacts
         self.extract_lucene_index()

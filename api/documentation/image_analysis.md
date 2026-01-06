@@ -15,22 +15,26 @@ The image extraction process is an asynchronous ETL pipeline that moves data fro
 4.  **Ingestion**: The `IngestionService.ingest_document` method is called (currently inline).
 
 ### 2. Core Extraction Logic
-**Files**: `api/preprocessing/pdf_extraction.py`, `api/preprocessing/vector_figure_extractor.py`
+**Files**: `api/preprocessing/pdf_extraction.py`, `api/preprocessing/smart_extractor.py`
 
-The `PdfExtractor` class uses `PyMuPDF` (fitz) to perform two types of image extraction:
+The `PdfExtractor` class has been upgraded from heuristic-based detection to a vision-powered **Smart Scan** approach.
 
-#### A. Bitmap (Raster) Images
-*   **Method**: `extract_bitmap_images()`
-*   **Detection**: Scans pages for embedded image objects (`page.get_images()`).
-*   **Processing**: Extracts raw bytes, converts CMYK to RGB if necessary.
-*   **Captioning**: Searches for text immediately above/below the image using heuristics (keywords like "Figure", "Table").
+#### A. Smart Scan (Vision LLM) - [DEFAULT]
+*   **Method**: `extract_figures_smart()`
+*   **Detection**: Uses **Claude 4.5 Haiku** (via `SmartPageExtractor`) to visually analyze each page.
+*   **Visual Grid**: To overcome LLM spatial reasoning limitations, a **0-1000 coordinate grid** is overlaid on the page image before analysis. This allows the LLM to provide high-precision bounding boxes.
+*   **Processing**: 
+    1.  Renders page to image.
+    2.  Applies visual grid.
+    3.  LLM identifies figures, exact captions, and bounding boxes (excluding captions).
+    4.  `PdfExtractor` crops the detected regions at 300 DPI.
 *   **Output**: Saves PNGs to disk and logs metadata to `figures_metadata.parquet`.
 
-#### B. Vector Graphics
-*   **Method**: `extract_vector_graphics()`
-*   **Detection**: Identifies clusters of drawing commands (lines, curves) that likely represent charts or diagrams.
-*   **Filtering**: Uses heuristics (segment count, density, aspect ratio) to ignore simple lines or text borders.
-*   **Rasterization**: Converts the detected vector region into a high-DPI PNG.
+#### B. Legacy Extraction (Heuristics)
+These methods are preserved for backward compatibility but are not used by default in the main pipeline.
+*   **Bitmap Images**: `_legacy_extract_bitmap_images()` - Scans for embedded image objects and uses proximity heuristics for captions.
+*   **Vector Graphics**: `_legacy_extract_vector_graphics()` - Identifies clusters of drawing commands and rasterizes them.
+
 
 ### 3. Data Persistence
 **File**: `api/app/services/ingestion.py` (`_save_figures`)
@@ -90,6 +94,7 @@ ANTHROPIC_FILE_CACHE_NAME: str = ".anthropic_file_cache.json"
 ANTHROPIC_FILE_TTL_HOURS: int = 12
 ANTHROPIC_FILES_BETA_HEADER: str = "files-api-2025-04-14"
 IMAGE_UPLOAD_LIMIT: int = 20  # Max images per batch
+VISION_LLM_MODEL: str = "claude-haiku-4-5-20251001"  # Default model for Smart Scan
 ```
 
 ### Vision Analysis Tool
@@ -299,3 +304,26 @@ The system handles common errors gracefully:
 - Upload failure → Logs error, skips failed image
 - Expired cache entries → Automatically re-uploads
 - Invalid image format → Skips with warning
+
+## Debugging & Visualization
+
+### Smart Scan Test Script
+**File**: `api/scripts/smart_scan_page.py`
+
+This script allows for manual verification of the Smart Scan logic on a per-page basis.
+
+**Usage**:
+```bash
+python api/scripts/smart_scan_page.py /path/to/doc.pdf --page 5
+```
+
+**Features**:
+- **Visual Output**: Plots the detected figures using `matplotlib`.
+- **Debug Plots**: Saves the rendered crops to a `debug_plots/` directory next to the PDF.
+- **DPI Consistency**: Uses 300 DPI for rendering, matching the production pipeline.
+- **Visual Grid**: Displays the coordinate grid used by the LLM for spatial reasoning.
+
+### Parquet Metadata Viewer
+**File**: `api/scripts/test_extraction.py`
+
+Runs the full extraction pipeline (Smart Scan) and prints a summary table of the extracted figures and their captions from the generated Parquet file.
