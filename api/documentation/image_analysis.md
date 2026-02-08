@@ -1,74 +1,78 @@
 # Image Analysis: Vision-Powered Search and Analysis
 
-This project provides comprehensive image search and analysis capabilities using FAISS vector embeddings for caption search and Claude's vision API for detailed image analysis.
+This project provides comprehensive image search and analysis capabilities using **Qdrant** for semantic caption search and **Claude's Vision API** for detailed image analysis.
 
-## What gets indexed
+## Extraction Pipeline
 
-Two separate FAISS indexes are built per PDF for image-related content:
+The image extraction process is an asynchronous ETL pipeline that moves data from the raw PDF to Postgres, Object Storage, and Vector Indexes.
 
-### 1. Image Captions Index
-Built under `extraction/<pdf_name>/faiss_index_images/` by `analyzer/FaissWrapper` and contains:
-- **Caption embeddings**: Vector embeddings of image captions extracted from figures
-- **Image metadata**: Image paths, IDs, page locations, dimensions, and caption text
+### 1. Triggering & Orchestration
+**Files**: `api/app/routers/documents.py`, `api/app/services/ingestion.py`
 
-### 2. Text Chunks Index (for reference)
-Built under `extraction/<pdf_name>/faiss_index/` - see [vector_search.md](./vector_search.md)
+1.  **Upload**: User uploads a PDF via `POST /documents:upload`.
+2.  **Storage**: The raw PDF is saved to object storage (`documents/{id}/{filename}`).
+3.  **Job Creation**: A `Document` record is created in Postgres with status `ingesting`.
+4.  **Ingestion**: The `IngestionService.ingest_document` method is called (currently inline).
 
-## Architecture
+### 2. Core Extraction Logic
+**Files**: `api/preprocessing/pdf_extraction.py`, `api/preprocessing/smart_extractor.py`
 
-The image analysis system consists of three main components:
+The `PdfExtractor` class has been upgraded from heuristic-based detection to a vision-powered **Smart Scan** approach.
 
-### 1. Image Extraction and Caption Detection
-**Module**: `preprocessing/pdf_extraction.py`
+#### A. Smart Scan (Vision LLM) - [DEFAULT]
+*   **Method**: `extract_figures_smart()`
+*   **Detection**: Uses **Claude 4.5 Haiku** (via `SmartPageExtractor`) to visually analyze each page.
+*   **Visual Grid**: To overcome LLM spatial reasoning limitations, a **0-1000 coordinate grid** is overlaid on the page image before analysis. This allows the LLM to provide high-precision bounding boxes.
+*   **Processing**: 
+    1.  Renders page to image.
+    2.  Applies visual grid.
+    3.  LLM identifies figures, exact captions, and bounding boxes (excluding captions).
+    4.  `PdfExtractor` crops the detected regions at 300 DPI.
+*   **Output**: Saves PNGs to disk and logs metadata to `figures_metadata.parquet`.
 
-During PDF extraction (`PdfExtractor.extract_bitmap_images()`):
-- Extracts images from PDF pages
-- Detects captions by searching text near images (±100px below, 50px above)
-- Looks for caption keywords: "figure", "fig.", "table", "image", "photo", "chart", "diagram"
-- Stores metadata in `figures_metadata.parquet` with schema defined in `analyzer/schemas.py`
+#### B. Legacy Extraction (Heuristics)
+These methods are preserved for backward compatibility but are not used by default in the main pipeline.
+*   **Bitmap Images**: `_legacy_extract_bitmap_images()` - Scans for embedded image objects and uses proximity heuristics for captions.
+*   **Vector Graphics**: `_legacy_extract_vector_graphics()` - Identifies clusters of drawing commands and rasterizes them.
 
-**Metadata Schema** (`FigureImageMetadata`):
-```python
-id: str              # UUID for the image
-page_index: int      # Source page number
-image_index: int     # Image number on page
-image_path: str      # Absolute path to PNG file
-has_caption: bool    # Whether a caption was detected
-caption: str         # Caption text (empty if none)
-width: int          # Image width in pixels
-height: int         # Image height in pixels
-```
 
-### 2. Caption Indexing and Search
-**Module**: `analyzer/faiss_wrapper.py`
+### 3. Data Persistence
+**File**: `api/app/services/ingestion.py` (`_save_figures`)
 
-#### Creating the Caption Index
+Once extraction is complete, the `IngestionService` persists the results:
 
-`FaissWrapper.index_image_captions()` workflow:
-1. Loads `figures_metadata.parquet` from extraction directory
-2. Filters for images with non-empty captions
-3. Creates LangChain Documents with:
-   - `page_content`: The caption text
-   - `metadata`: All image metadata (ID, path, dimensions, page location)
-4. Builds FAISS index using the same embedding model as text chunks
-5. Saves to `extraction/<pdf_name>/faiss_index_images/`
+1.  **Object Storage**: Uploads extracted PNGs to `figures/{doc_id}/{image_name}`.
+2.  **Relational DB (Postgres)**: Creates `Figure` records containing:
+    *   `document_id`, `page_id`
+    *   `figure_no`
+    *   `caption_text`
+    *   `storage_uri`
+    *   `bbox_json` (dimensions)
+3.  **Vector DB (Qdrant)**:
+    *   Generates embeddings for **captions** (using the text embedding model).
+    *   Upserts points to the `image_embeddings` collection in Qdrant.
+    *   *Note: We embed captions, not the image pixels, to enable semantic text-to-image search.*
 
-#### Searching Captions
+## Indexing & Search
 
-`SessionRegistry.search_image_captions()` provides semantic search:
-- Input: Natural language query (e.g., "neural network diagram")
-- Output: Ranked list of images with matching captions
-- Returns: Complete image metadata including paths for retrieval
+### Qdrant Collections
+The system uses Qdrant for all vector operations.
 
-**Configuration** (analyzer/config.py):
-```python
-EXTRACTION_FAISS_IMAGES_DIR: str = "faiss_index_images"
-```
+*   **Collection**: `image_embeddings`
+*   **Vector Size**: 768 (matches text embedding model)
+*   **Payload**:
+    *   `figure_id`: UUID of the figure
+    *   `document_id`: UUID of the parent document
+    *   `caption`: The extracted caption text
+    *   `storage_uri`: Path to the image in object storage
 
-### 3. Image Analysis with Claude Vision
+### Local Artifacts (Legacy/Debug)
+The `PdfExtractor` also generates local FAISS indexes in the extraction directory (`extraction/<pdf_name>/faiss_index_images/`). These are primarily for debugging or offline analysis and are not used by the main API endpoints.
+
+## Image Analysis with Claude Vision
 **Module**: `agents/tools.py` → `analyze_images` tool
 
-#### Anthropic Files API Integration
+### Anthropic Files API Integration
 
 Images are uploaded to Anthropic's Files API for vision analysis:
 
@@ -90,9 +94,10 @@ ANTHROPIC_FILE_CACHE_NAME: str = ".anthropic_file_cache.json"
 ANTHROPIC_FILE_TTL_HOURS: int = 12
 ANTHROPIC_FILES_BETA_HEADER: str = "files-api-2025-04-14"
 IMAGE_UPLOAD_LIMIT: int = 20  # Max images per batch
+VISION_LLM_MODEL: str = "claude-haiku-4-5-20251001"  # Default model for Smart Scan
 ```
 
-#### Vision Analysis Tool
+### Vision Analysis Tool
 
 The `analyze_images` tool provides flexible image analysis for LangChain agents:
 
@@ -229,20 +234,6 @@ analyze_images(
 # Returns: Detailed analysis of the architecture
 ```
 
-## Integration with Extraction Pipeline
-
-The image analysis system is integrated into the PDF extraction pipeline:
-
-**`PdfExtractor.extract_all()` sequence**:
-1. `extract_text()` - Extract text from PDF
-2. `extract_bitmap_images()` - Extract images + detect captions → `figures_metadata.parquet`
-3. `extract_vector_graphics()` - Extract vector figures
-4. `extract_text_chunks()` - Chunk text
-5. `extract_lucene_index()` - Build lexical search index
-6. `extract_embeddings()` - Build FAISS indexes:
-   - Text chunks → `faiss_index/`
-   - Image captions → `faiss_index_images/`
-
 ## Dependencies
 
 ```txt
@@ -250,6 +241,7 @@ anthropic==0.39.0           # Anthropic API client
 langchain-anthropic==1.0.0  # LangChain Anthropic integration
 pandas==2.3.3               # Parquet file reading
 pyarrow==22.0.0            # Parquet support
+qdrant-client              # Vector DB client
 ```
 
 ## Files API Details
@@ -313,12 +305,25 @@ The system handles common errors gracefully:
 - Expired cache entries → Automatically re-uploads
 - Invalid image format → Skips with warning
 
-## Future Enhancements
+## Debugging & Visualization
 
-Potential improvements:
-- Base64 encoding option (no API upload required)
-- Image preprocessing/resizing before upload
-- Persistent cache across sessions (database)
-- Support for vector graphics analysis
-- Batch analysis with parallel API calls
-- Image similarity search (not just captions)
+### Smart Scan Test Script
+**File**: `api/scripts/smart_scan_page.py`
+
+This script allows for manual verification of the Smart Scan logic on a per-page basis.
+
+**Usage**:
+```bash
+python api/scripts/smart_scan_page.py /path/to/doc.pdf --page 5
+```
+
+**Features**:
+- **Visual Output**: Plots the detected figures using `matplotlib`.
+- **Debug Plots**: Saves the rendered crops to a `debug_plots/` directory next to the PDF.
+- **DPI Consistency**: Uses 300 DPI for rendering, matching the production pipeline.
+- **Visual Grid**: Displays the coordinate grid used by the LLM for spatial reasoning.
+
+### Parquet Metadata Viewer
+**File**: `api/scripts/test_extraction.py`
+
+Runs the full extraction pipeline (Smart Scan) and prints a summary table of the extracted figures and their captions from the generated Parquet file.

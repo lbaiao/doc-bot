@@ -2,7 +2,7 @@ import pymupdf
 import os
 import logging
 import uuid
-from typing import Tuple
+from typing import Tuple, List
 import pandas as pd
 from analyzer.config import default_config
 from analyzer.schemas import FigureImageCols as FIC, FigureImageMetadata
@@ -12,6 +12,32 @@ from preprocessing.chunker import TextChunker
 from analyzer.faiss_wrapper import FaissWrapper
 
 logger = logging.getLogger(__name__)
+
+class UsedAreaTracker:
+    """Tracks areas of the page that have already been assigned as captions."""
+    def __init__(self):
+        self.used_rects = []
+
+    def is_used(self, rect: pymupdf.Rect, threshold: float = 0.1) -> bool:
+        """Check if rect overlaps significantly with any used rect."""
+        for used in self.used_rects:
+            # Calculate intersection
+            intersect = rect & used
+            if intersect.is_empty:
+                continue
+            
+            # Check overlap area relative to the candidate rect
+            overlap_area = intersect.width * intersect.height
+            rect_area = rect.width * rect.height
+            
+            if rect_area > 0 and (overlap_area / rect_area) > threshold:
+                return True
+        return False
+
+    def mark_used(self, rect: pymupdf.Rect):
+        """Mark a rect as used."""
+        self.used_rects.append(rect)
+
 
 class PdfExtractor:
     def __init__(self, file_path: str):
@@ -28,59 +54,101 @@ class PdfExtractor:
         logger.info(f"Initialized PdfExtractor for file: {self.file_name}")
         logger.debug(f"Output directory: {self.output_dir}")
 
-    def extract_image_caption(self, page: pymupdf.Page, image_rect: pymupdf.Rect) -> Tuple[bool, str]:
+    def extract_image_caption(self, page: pymupdf.Page, image_rect: pymupdf.Rect, tracker: UsedAreaTracker) -> Tuple[bool, str]:
         """
-        Search for caption text below (or above) an image.
+        Search for caption text below (or above) an image using block analysis.
         Returns (has_caption, caption_text)
         """
-        # Define search zones
+        # 1. Define search zones
+        # Look 150px below (typical for figures) and 80px above (typical for tables)
         search_below = pymupdf.Rect(
-            image_rect.x0, 
-            image_rect.y1,  # Start at bottom of image
-            image_rect.x1, 
-            image_rect.y1 + 100  # Search 100 pixels below
+            image_rect.x0 - 20, # Allow slight margin width-wise
+            image_rect.y1, 
+            image_rect.x1 + 20, 
+            image_rect.y1 + 150
         )
         
         search_above = pymupdf.Rect(
-            image_rect.x0,
-            image_rect.y0 - 50,  # 50 pixels above
-            image_rect.x1,
+            image_rect.x0 - 20,
+            image_rect.y0 - 80,
+            image_rect.x1 + 20,
             image_rect.y0
         )
         
-        # Get words in both zones
-        all_words = page.get_text("words")
-        if not isinstance(all_words, list):
+        # 2. Get all text blocks on page
+        # blocks are (x0, y0, x1, y1, "text", block_no, block_type)
+        blocks = page.get_text("blocks")
+        
+        candidates = []
+        
+        caption_starts = ("figure", "fig.", "fig ", "table", "image", "photo", "chart", "diagram", "scheme")
+        
+        for b in blocks:
+            b_rect = pymupdf.Rect(b[:4])
+            text = b[4].strip()
+            
+            if not text or len(text) < 3:
+                continue
+                
+            # Skip if already used
+            if tracker.is_used(b_rect):
+                continue
+                
+            # Check if block is in search zones
+            is_below = search_below.intersects(b_rect)
+            is_above = search_above.intersects(b_rect)
+            
+            if not (is_below or is_above):
+                continue
+                
+            # Calculate distance to image
+            if is_below:
+                dist = b_rect.y0 - image_rect.y1
+            else:
+                dist = image_rect.y0 - b_rect.y1
+                
+            # Heuristics scoring
+            score = 0
+            text_lower = text.lower()
+            
+            # 1. Keyword bonus (strong indicator)
+            if text_lower.startswith(caption_starts):
+                score += 50
+            elif any(kw in text_lower[:30] for kw in caption_starts): # Keyword early in text
+                score += 20
+                
+            # 2. Distance penalty (closer is better)
+            score -= abs(dist) * 0.2
+            
+            # 3. Alignment bonus (center alignment often used for captions)
+            img_center = (image_rect.x0 + image_rect.x1) / 2
+            block_center = (b_rect.x0 + b_rect.x1) / 2
+            align_diff = abs(img_center - block_center)
+            if align_diff < 50:
+                score += 10
+            
+            candidates.append({
+                "text": text,
+                "rect": b_rect,
+                "score": score,
+                "is_keyword_start": text_lower.startswith(caption_starts)
+            })
+            
+        if not candidates:
             return False, ""
             
-        words_below = [w for w in all_words 
-                       if isinstance(w, (list, tuple)) and len(w) >= 5 and 
-                       search_below.intersects(pymupdf.Rect(w[:4]))]
-        words_above = [w for w in all_words 
-                       if isinstance(w, (list, tuple)) and len(w) >= 5 and 
-                       search_above.intersects(pymupdf.Rect(w[:4]))]
+        # Sort by score descending
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        best = candidates[0]
         
-        # Combine text
-        text_below = " ".join(w[4] for w in words_below if len(w) > 4).strip()
-        text_above = " ".join(w[4] for w in words_above if len(w) > 4).strip()
+        # Threshold: If no keyword, require very close proximity or high confidence
+        if not best["is_keyword_start"] and best["score"] < 0:
+            return False, ""
+            
+        # Mark as used
+        tracker.mark_used(best["rect"])
         
-        # Check for caption keywords
-        caption_keywords = ("figure", "fig.", "fig", "table", "image", "photo", "chart", "diagram")
-        
-        text_below_lower = text_below.lower()
-        text_above_lower = text_above.lower()
-        
-        has_caption_below = any(kw in text_below_lower for kw in caption_keywords)
-        has_caption_above = any(kw in text_above_lower for kw in caption_keywords)
-        
-        if has_caption_below:
-            return True, text_below
-        elif has_caption_above:
-            return True, text_above
-        elif text_below:  # Return below text if exists, even without keywords
-            return False, text_below
-        
-        return False, ""
+        return True, best["text"]
 
     def extract_text(self):
         logger.info(f"Starting text extraction from {self.file_name}")
@@ -99,7 +167,7 @@ class PdfExtractor:
         
         logger.info(f"Text extraction complete: {page_count} pages extracted to {self.text_path}")
 
-    def extract_bitmap_images(self):
+    def _legacy_extract_bitmap_images(self):
         logger.info(f"Starting bitmap image extraction from {self.file_name}")
         doc = self.doc
         
@@ -109,21 +177,30 @@ class PdfExtractor:
         total_images = 0
         for page_index in range(len(doc)): # iterate over pdf pages
             page = doc[page_index] # get the page
+            # Track used areas for captions on this page
+            tracker = UsedAreaTracker()
+
+            # Sort images top-to-bottom to ensure logical processing order
+            # image_list is [(xref, smask, width, height, bpc, colorspace, alt.colorspace, name, filter, referencer), ...]
+            # We need rects to sort.
+            
+            # First pass: gather all image rects and info
             image_list = page.get_images()
-
-            # print the number of images found on the page
-            if image_list:
-                logger.debug(f"Found {len(image_list)} images on page {page_index}")
-                print(f"Found {len(image_list)} images on page {page_index}")
-            else:
-                logger.debug(f"No images found on page {page_index}")
-                print("No images found on page", page_index)
-
-            for image_index, img in enumerate(image_list, start=1): # enumerate the image list
-                xref = img[0] # get the XREF of the image
-                
-                # Get image bounding box on page
-                image_rects = page.get_image_rects(xref)
+            page_images = []
+            for img in image_list:
+                xref = img[0]
+                rects = page.get_image_rects(xref)
+                if not rects:
+                    continue
+                # Use first rect for sorting/processing (simplification)
+                rect = rects[0]
+                page_images.append((rect.y0, rect.x0, img, rect))
+            
+            # Sort by vertical position (y0)
+            page_images.sort(key=lambda x: (x[0], x[1]))
+            
+            for image_index, (_, _, img, rect) in enumerate(page_images, start=1):
+                xref = img[0]
                 
                 pix = pymupdf.Pixmap(doc, xref) # create a Pixmap
 
@@ -136,16 +213,13 @@ class PdfExtractor:
                 output_path = os.path.join(self.images_dir, filename)
                 pix.save(output_path) # save the image as png
                 
-                # Extract caption if image has bounding box
-                caption = ""
-                has_caption = False
-                if image_rects:
-                    rect = image_rects[0]  # Use first occurrence
-                    has_caption, caption = self.extract_image_caption(page, rect)
-                    if has_caption:
-                        logger.info(f"Found caption: {caption[:100]}")
-                    elif caption:
-                        logger.debug(f"Found text near image: {caption[:50]}")
+                # Extract caption using tracker
+                has_caption, caption = self.extract_image_caption(page, rect, tracker)
+
+                if has_caption:
+                    logger.info(f"Found caption: {caption[:100]}")
+                elif caption:
+                    logger.debug(f"Found text near image: {caption[:50]}")
                 
                 # Store metadata (use canonical schema/columns)
                 record = FigureImageMetadata(
@@ -173,7 +247,7 @@ class PdfExtractor:
         
         logger.info(f"Bitmap image extraction complete: {total_images} images extracted to {self.images_dir}")
 
-    def extract_vector_graphics(self):
+    def _legacy_extract_vector_graphics(self):
         logger.info(f"Starting vector graphics extraction from {self.file_name}")
         doc = self.doc
 
@@ -246,11 +320,107 @@ class PdfExtractor:
             logger.error(f"FAISS embedding extraction failed for {self.file_name}: {e}")
         
         logger.info(f"FAISS embedding extraction complete for {self.file_name}")
+        
+    @staticmethod
+    def render_page_crop(page: pymupdf.Page, bbox_2d: List[int], dpi: int = 300) -> pymupdf.Pixmap:
+        """
+        Render a crop of a page based on a 0-1000 scale bounding box.
+        """
+        page_width = page.rect.width
+        page_height = page.rect.height
+        
+        x0 = (bbox_2d[0] / 1000.0) * page_width
+        y0 = (bbox_2d[1] / 1000.0) * page_height
+        x1 = (bbox_2d[2] / 1000.0) * page_width
+        y1 = (bbox_2d[3] / 1000.0) * page_height
+        
+        crop_rect = pymupdf.Rect(x0, y0, x1, y1)
+        return page.get_pixmap(clip=crop_rect, dpi=dpi)
+
+    def extract_figures_smart(self):
+        """
+        Extract figures using Vision LLM (SmartPageExtractor).
+        Replaces both bitmap and vector extraction with a unified AI approach.
+        """
+        logger.info(f"Starting Smart Scan extraction for {self.file_name}")
+        
+        from preprocessing.smart_extractor import SmartPageExtractor
+        from analyzer.config import default_config
+        
+        # Initialize Smart Extractor with configured model
+        smart_extractor = SmartPageExtractor(
+            model_name=default_config.VISION_LLM_MODEL,
+            api_key=default_config.ANTHROPIC_API_KEY
+        )
+        
+        doc = self.doc
+        image_data = []
+        total_figures = 0
+        
+        for page_index in range(len(doc)):
+            page = doc[page_index]
+            logger.info(f"Smart scanning page {page_index + 1}/{len(doc)}...")
+            
+            try:
+                # 1. AI Analysis
+                result = smart_extractor.extract_from_page(page)
+                
+                if not result.figures:
+                    logger.info(f"No figures found on page {page_index + 1}")
+                    continue
+                
+                # 2. Process each detected figure
+                for i, fig in enumerate(result.figures, start=1):
+                    # 3. Crop and Save Image
+                    # Use higher DPI for better quality
+                    pix = self.render_page_crop(page, fig.bbox_2d, dpi=300)
+                    
+                    filename = f"page_{page_index}_figure_{i}.png"
+                    os.makedirs(self.images_dir, exist_ok=True)
+                    output_path = os.path.join(self.images_dir, filename)
+                    pix.save(output_path)
+                    
+                    # 4. Store Metadata
+                    record = FigureImageMetadata(
+                        id=str(uuid.uuid4()),
+                        page_index=page_index,
+                        image_index=i,
+                        image_path=output_path,
+                        has_caption=True, # AI always returns a caption field
+                        caption=fig.caption,
+                        width=pix.width,
+                        height=pix.height,
+                        metadata={
+                            "label": fig.label,
+                            "description": fig.description,
+                            "type": fig.type,
+                            "source": "smart_scan"
+                        }
+                    )
+                    image_data.append(record.to_record())
+                    total_figures += 1
+                    logger.info(f"Extracted {fig.label}: {output_path}")
+                    
+            except Exception as e:
+                logger.error(f"Failed to smart scan page {page_index + 1}: {e}")
+                # Continue to next page instead of failing everything
+                continue
+
+        # Save metadata to parquet file
+        if image_data:
+            df = pd.DataFrame(image_data)
+            df.to_parquet(self.parquet_path, index=False)
+            logger.info(f"Saved smart scan metadata to {self.parquet_path}")
+        
+        logger.info(f"Smart Scan complete: {total_figures} figures extracted to {self.images_dir}")
 
     def extract_all(self):
         self.extract_text()
-        self.extract_bitmap_images()
-        self.extract_vector_graphics()
+        # Use Smart Scan instead of legacy methods
+        # self._legacy_extract_bitmap_images()
+        # self._legacy_extract_vector_graphics()
+        self.extract_figures_smart()
+        
         self.extract_text_chunks()
         # Build Lucene-style index for this PDF's extracted artifacts
         self.extract_lucene_index()

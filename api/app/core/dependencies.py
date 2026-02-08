@@ -1,4 +1,5 @@
 from typing import Annotated
+from functools import lru_cache
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,8 +18,9 @@ StorageDep = Annotated[StorageService, Depends(get_storage_service)]
 VectorDBDep = Annotated[VectorDBClient, Depends(get_vector_db)]
 
 
+@lru_cache()
 def get_embeddings_service() -> EmbeddingsService:
-    """Get embeddings service instance."""
+    """Get embeddings service instance (cached)."""
     return EmbeddingsService()
 
 

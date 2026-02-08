@@ -12,3 +12,4 @@ write integration tests for endpoints. authenticate with the same user from seed
 # Future work (Do not implement now)
 - implement table ingestions and search (later)
 - image embeddings
+- do image processing / OCR with Open Source model Qwen2-VL-7B model. Maybe usa Ollama for hosting.

@@ -27,6 +27,7 @@ class Config(BaseSettings):
     ANTHROPIC_FILE_TTL_HOURS: int = 12  # Files expire after 12 hours
     ANTHROPIC_FILES_BETA_HEADER: str = "files-api-2025-04-14"
     IMAGE_UPLOAD_LIMIT: int = 20  # Maximum images to upload in one batch
+    VISION_LLM_MODEL: str = "claude-haiku-4-5-20251001"
 
     
     model_config = SettingsConfigDict(env_file='.env', case_sensitive=False)
