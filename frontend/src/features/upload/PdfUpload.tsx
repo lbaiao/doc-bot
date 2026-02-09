@@ -30,11 +30,10 @@ export function PdfUpload() {
             });
             const { document_id } = uploadRes.data;
 
-            // 2. Create Chat linked to validation
-            // We pass document_ids even if backend might ignore it for now (per plan)
+            // 2. Create chat linked to this uploaded document
             const chatRes = await apiClient.post('/v1/chats', {
                 title: file.name.replace('.pdf', ''),
-                document_ids: [document_id],
+                document_id,
             });
             const chat = chatRes.data;
 

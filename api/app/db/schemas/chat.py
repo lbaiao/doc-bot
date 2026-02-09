@@ -8,6 +8,16 @@ from pydantic import BaseModel, ConfigDict
 class ChatCreateIn(BaseModel):
     title: Optional[str] = None
     document_id: Optional[uuid.UUID] = None
+    # Backward-compatible fallback for older clients that send an array.
+    document_ids: Optional[list[uuid.UUID]] = None
+
+    @property
+    def resolved_document_id(self) -> Optional[uuid.UUID]:
+        if self.document_id:
+            return self.document_id
+        if self.document_ids:
+            return self.document_ids[0]
+        return None
 
 
 class ChatOut(BaseModel):

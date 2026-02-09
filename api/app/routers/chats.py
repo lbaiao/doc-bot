@@ -26,7 +26,7 @@ async def create_chat(
     title = chat_in.title or "New Chat"
     
     # If document_id provided, verify it exists and belongs to user
-    document_id = chat_in.document_id
+    document_id = chat_in.resolved_document_id
     if document_id:
         from app.db.models.document import Document
         result = await session.execute(
