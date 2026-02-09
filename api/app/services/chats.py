@@ -101,7 +101,7 @@ class ChatService:
         default_registry.set_user(user_id)
         if document_id:
             try:
-                default_registry.ensure(str(document_id))
+                await default_registry.ensure_async(str(document_id))
             except Exception as e:
                 logger.warning(f"Could not set active document {document_id}: {e}")
         

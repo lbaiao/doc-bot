@@ -22,5 +22,5 @@ def make_document_agent():
         timeout=None,
         max_retries=2,
     )
-    tools = [set_active_document, hybrid_search, text_search, get_chunks, search_caption, analyze_images]
+    tools = [hybrid_search, text_search, get_chunks, search_caption, analyze_images]
     return create_agent(chat, tools)

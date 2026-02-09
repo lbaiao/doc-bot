@@ -117,7 +117,7 @@ async def post_message(
         raise HTTPException(status_code=404, detail="Chat not found")
 
     if chat.document_id:
-        default_registry.ensure(str(chat.document_id))
+        await default_registry.ensure_async(str(chat.document_id))
     
     # Store user message
     # Delegate to chat service (persists user/assistant messages)

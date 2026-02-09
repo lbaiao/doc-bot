@@ -131,23 +131,8 @@ class DBSessionRegistry:
         In DB system, this just validates the document exists.
         """
         try:
-            doc_uuid = uuid.UUID(document_id)
-            
-            # Run async check in sync context
-            async def check_exists():
-                async with async_session_maker() as session:
-                    result = await session.execute(
-                        select(Document).where(Document.id == doc_uuid)
-                    )
-                    doc = result.scalar_one_or_none()
-                    if not doc:
-                        raise ValueError(f"Document {document_id} not found")
-                    if doc.status != "ready":
-                        raise ValueError(f"Document {document_id} not ready (status: {doc.status})")
-                    return doc
-            
-            doc = self._run_sync(check_exists())
-            
+            doc = self._run_sync(self._check_document_ready(document_id))
+
             self.set_active(document_id)
             if doc.owner_id:
                 self.set_user(doc.owner_id)
@@ -157,6 +142,39 @@ class DBSessionRegistry:
         except Exception as e:
             logger.error(f"Error ensuring document {document_id}: {e}")
             raise
+
+    async def ensure_async(self, document_id: str):
+        """
+        Async-safe variant of ensure() for FastAPI and async services.
+
+        This must be used when already inside a running event loop to avoid
+        nested-loop RuntimeError from run_until_complete().
+        """
+        try:
+            doc = await self._check_document_ready(document_id)
+
+            self.set_active(document_id)
+            if doc.owner_id:
+                self.set_user(doc.owner_id)
+
+            logger.info(f"Document {document_id} ready")
+        except Exception as e:
+            logger.error(f"Error ensuring document {document_id}: {e}")
+            raise
+
+    async def _check_document_ready(self, document_id: str) -> Document:
+        """Load and validate a document is present and ready."""
+        doc_uuid = uuid.UUID(document_id)
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(Document).where(Document.id == doc_uuid)
+            )
+            doc = result.scalar_one_or_none()
+            if not doc:
+                raise ValueError(f"Document {document_id} not found")
+            if doc.status != "ready":
+                raise ValueError(f"Document {document_id} not ready (status: {doc.status})")
+            return doc
     
     def search_lexical(
         self,
