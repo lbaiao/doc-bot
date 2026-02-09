@@ -228,6 +228,6 @@ class ChatService:
             )
             self.session.add(error_message)
             await self.session.commit()
-            await self.session.refresh(error_message)
+            await self.session.refresh(error_message, ["tool_runs"])
             
             return error_message

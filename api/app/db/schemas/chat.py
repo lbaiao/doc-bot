@@ -7,12 +7,13 @@ from pydantic import BaseModel, ConfigDict
 
 class ChatCreateIn(BaseModel):
     title: Optional[str] = None
-    document_ids: Optional[list[uuid.UUID]] = None
+    document_id: Optional[uuid.UUID] = None
 
 
 class ChatOut(BaseModel):
     id: uuid.UUID
     title: str
+    document_id: Optional[uuid.UUID] = None
     created_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
