@@ -1,15 +1,26 @@
 import { Link, NavLink } from 'react-router-dom';
-import { Plus, MessageSquare, Settings } from 'lucide-react';
+import { Plus, MessageSquare, Settings, Loader2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { apiClient } from '@/lib/api-client';
+import { formatRelativeTime } from '@/lib/date-utils';
 
-// Mock sessions for now
-const sessions = [
-    { id: '1', title: 'Q1 Financial Report', date: '2h ago' },
-    { id: '2', title: 'User Research 2024', date: '1d ago' },
-];
+interface Chat {
+    id: string;
+    title: string;
+    created_at: string;
+}
 
 export function Sidebar({ className }: { className?: string }) {
+    const { data: chats, isLoading } = useQuery({
+        queryKey: ['chats'],
+        queryFn: async () => {
+            const res = await apiClient.get<Chat[]>('/v1/chats');
+            return res.data;
+        },
+    });
+
     return (
         <div className={cn("flex h-screen w-64 flex-col border-r bg-muted/10", className)}>
             <div className="p-4">
@@ -25,25 +36,41 @@ export function Sidebar({ className }: { className?: string }) {
                 <div className="px-4 text-xs font-semibold text-muted-foreground mb-2">
                     Recent
                 </div>
-                <nav className="space-y-1 px-2">
-                    {sessions.map((session) => (
-                        <NavLink
-                            key={session.id}
-                            to={`/app/s/${session.id}`}
-                            className={({ isActive }) =>
-                                cn(
-                                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted",
-                                    isActive ? "bg-muted font-medium text-primary" : "text-muted-foreground"
-                                )
-                            }
-                        >
-                            <MessageSquare className="h-4 w-4" />
-                            <div className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                                {session.title}
+
+                {isLoading ? (
+                    <div className="flex justify-center p-4">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    </div>
+                ) : (
+                    <nav className="space-y-1 px-2">
+                        {chats?.map((chat) => (
+                            <NavLink
+                                key={chat.id}
+                                to={`/app/s/${chat.id}`}
+                                className={({ isActive }) =>
+                                    cn(
+                                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted",
+                                        isActive ? "bg-muted font-medium text-primary" : "text-muted-foreground"
+                                    )
+                                }
+                            >
+                                <MessageSquare className="h-4 w-4 shrink-0" />
+                                <div className="flex-1 overflow-hidden">
+                                    <div className="truncate font-medium">{chat.title}</div>
+                                    <div className="text-xs text-muted-foreground truncate">
+                                        {formatRelativeTime(chat.created_at)}
+                                    </div>
+                                </div>
+                            </NavLink>
+                        ))}
+
+                        {chats?.length === 0 && (
+                            <div className="px-4 py-2 text-sm text-muted-foreground text-center">
+                                No chats yet
                             </div>
-                        </NavLink>
-                    ))}
-                </nav>
+                        )}
+                    </nav>
+                )}
             </div>
 
             <div className="border-t p-4">
