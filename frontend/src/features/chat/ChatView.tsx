@@ -5,6 +5,7 @@ import { apiClient } from '@/lib/api-client';
 import { MessageList } from './MessageList';
 import { Composer } from './Composer';
 import { Loader2 } from 'lucide-react';
+import { queryKeys } from '@/lib/query-keys';
 
 export function ChatView() {
     const { sessionId } = useParams<{ sessionId: string }>();
@@ -12,7 +13,7 @@ export function ChatView() {
 
     // Fetch initial messages
     const { data: history, isLoading } = useQuery({
-        queryKey: ['messages', sessionId],
+        queryKey: queryKeys.messages(sessionId),
         queryFn: async () => {
             const res = await apiClient.get(`/v1/chats/${sessionId}/messages`);
             return res.data;

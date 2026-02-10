@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { apiClient } from '@/lib/api-client';
 import { formatRelativeTime } from '@/lib/date-utils';
+import { queryKeys } from '@/lib/query-keys';
 
 interface Chat {
     id: string;
@@ -14,7 +15,7 @@ interface Chat {
 
 export function Sidebar({ className }: { className?: string }) {
     const { data: chats, isLoading } = useQuery({
-        queryKey: ['chats'],
+        queryKey: queryKeys.chats(),
         queryFn: async () => {
             const res = await apiClient.get<Chat[]>('/v1/chats');
             return res.data;
