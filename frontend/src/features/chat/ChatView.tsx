@@ -6,17 +6,18 @@ import { MessageList } from './MessageList';
 import { Composer } from './Composer';
 import { Loader2 } from 'lucide-react';
 import { queryKeys } from '@/lib/query-keys';
+import { MessageOut } from '@/types/chat';
 
 export function ChatView() {
     const { sessionId } = useParams<{ sessionId: string }>();
-    const [messages, setMessages] = useState<any[]>([]);
+    const [messages, setMessages] = useState<MessageOut[]>([]);
 
     // Fetch initial messages
     const { data: history, isLoading } = useQuery({
         queryKey: queryKeys.messages(sessionId),
         queryFn: async () => {
             const res = await apiClient.get(`/v1/chats/${sessionId}/messages`);
-            return res.data;
+            return (res.data as unknown[]).map((raw) => MessageOut.fromApi(raw));
         },
         enabled: !!sessionId,
     });
@@ -31,16 +32,16 @@ export function ChatView() {
     const sendMessageMutation = useMutation({
         mutationFn: async (content: string) => {
             const res = await apiClient.post(`/v1/chats/${sessionId}/messages`, { content });
-            return res.data;
+            return MessageOut.fromApi(res.data);
         },
         onMutate: async (newContent) => {
             // Optimistic update
-            const tempMsg = {
+            const tempMsg = new MessageOut({
                 id: 'temp-' + Date.now(),
                 role: 'user',
-                content: newContent,
+                content: { text: newContent },
                 created_at: new Date().toISOString()
-            };
+            });
             setMessages((prev) => [...prev, tempMsg]);
             return { tempMsg };
         },
