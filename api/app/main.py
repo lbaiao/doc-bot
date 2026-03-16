@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db.base import engine
 from app.db.init_db import init_db
-from app.routers import admin, auth, chats, documents, search, users
+from app.routers import admin, auth, chats, documents, files, search, users
 
 
 @asynccontextmanager
@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(users.router, prefix=api_v1_prefix)
     app.include_router(documents.router, prefix=api_v1_prefix)
     app.include_router(chats.router, prefix=api_v1_prefix)
+    app.include_router(files.router, prefix=api_v1_prefix)
     app.include_router(search.router, prefix=api_v1_prefix)
     
     return app

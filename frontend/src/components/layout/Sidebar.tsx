@@ -1,19 +1,24 @@
+import { useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
-import { Plus, MessageSquare, Settings, Loader2 } from 'lucide-react';
+import { Plus, MessageSquare, Settings, Loader2, Images } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { apiClient } from '@/lib/api-client';
 import { formatRelativeTime } from '@/lib/date-utils';
 import { queryKeys } from '@/lib/query-keys';
+import { ImageGalleryModal } from '@/features/viewers/ImageGalleryModal';
 
 interface Chat {
     id: string;
     title: string;
+    document_id?: string | null;
     created_at: string;
 }
 
 export function Sidebar({ className }: { className?: string }) {
+    const [activeImagesDocumentId, setActiveImagesDocumentId] = useState<string | null>(null);
+
     const { data: chats, isLoading } = useQuery({
         queryKey: queryKeys.chats(),
         queryFn: async () => {
@@ -45,24 +50,35 @@ export function Sidebar({ className }: { className?: string }) {
                 ) : (
                     <nav className="space-y-1 px-2">
                         {chats?.map((chat) => (
-                            <NavLink
-                                key={chat.id}
-                                to={`/app/s/${chat.id}`}
-                                className={({ isActive }) =>
-                                    cn(
-                                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted",
-                                        isActive ? "bg-muted font-medium text-primary" : "text-muted-foreground"
-                                    )
-                                }
-                            >
-                                <MessageSquare className="h-4 w-4 shrink-0" />
-                                <div className="flex-1 overflow-hidden">
-                                    <div className="truncate font-medium">{chat.title}</div>
-                                    <div className="text-xs text-muted-foreground truncate">
-                                        {formatRelativeTime(chat.created_at)}
+                            <div key={chat.id} className="rounded-md hover:bg-muted/50">
+                                <NavLink
+                                    to={`/app/s/${chat.id}`}
+                                    className={({ isActive }) =>
+                                        cn(
+                                            "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+                                            isActive ? "bg-muted font-medium text-primary" : "text-muted-foreground"
+                                        )
+                                    }
+                                >
+                                    <MessageSquare className="h-4 w-4 shrink-0" />
+                                    <div className="flex-1 overflow-hidden">
+                                        <div className="truncate font-medium">{chat.title}</div>
+                                        <div className="text-xs text-muted-foreground truncate">
+                                            {formatRelativeTime(chat.created_at)}
+                                        </div>
                                     </div>
-                                </div>
-                            </NavLink>
+                                </NavLink>
+                                {chat.document_id && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveImagesDocumentId(chat.document_id ?? null)}
+                                        className="w-full flex items-center gap-2 px-3 pb-2 text-xs text-muted-foreground hover:text-foreground"
+                                    >
+                                        <Images className="h-3.5 w-3.5" />
+                                        <span>View extracted images</span>
+                                    </button>
+                                )}
+                            </div>
                         ))}
 
                         {chats?.length === 0 && (
@@ -73,6 +89,12 @@ export function Sidebar({ className }: { className?: string }) {
                     </nav>
                 )}
             </div>
+
+            <ImageGalleryModal
+                isOpen={!!activeImagesDocumentId}
+                onClose={() => setActiveImagesDocumentId(null)}
+                documentId={activeImagesDocumentId ?? ''}
+            />
 
             <div className="border-t p-4">
                 <nav className="space-y-1">

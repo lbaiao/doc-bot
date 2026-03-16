@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { apiClient } from '@/lib/api-client';
 import { Loader2, ImageOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useQuery } from '@tanstack/react-query';
+import { queryKeys } from '@/lib/query-keys';
 
 interface AuthImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
     src: string; // The API endpoint URI (e.g. /v1/files?uri=...)
@@ -9,37 +11,33 @@ interface AuthImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
 
 export function AuthImage({ src, className, alt, ...props }: AuthImageProps) {
     const [imgSrc, setImgSrc] = useState<string | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(false);
+
+    const { data: blob, isLoading, isError } = useQuery({
+        queryKey: queryKeys.fileBlob(src),
+        queryFn: async () => {
+            const res = await apiClient.get(src, { responseType: 'blob' });
+            return res.data as Blob;
+        },
+        enabled: !!src,
+        staleTime: 1000 * 60 * 5,
+        gcTime: 1000 * 60 * 30,
+    });
 
     useEffect(() => {
-        let active = true;
-        setLoading(true);
-        setError(false);
+        if (!blob) {
+            setImgSrc(null);
+            return;
+        }
 
-        apiClient.get(src, { responseType: 'blob' })
-            .then((res) => {
-                if (active) {
-                    const url = URL.createObjectURL(res.data);
-                    setImgSrc(url);
-                    setLoading(false);
-                }
-            })
-            .catch((err) => {
-                console.error("Failed to load image", src, err);
-                if (active) {
-                    setError(true);
-                    setLoading(false);
-                }
-            });
+        const objectUrl = URL.createObjectURL(blob);
+        setImgSrc(objectUrl);
 
         return () => {
-            active = false;
-            if (imgSrc) URL.revokeObjectURL(imgSrc);
+            URL.revokeObjectURL(objectUrl);
         };
-    }, [src]);
+    }, [blob]);
 
-    if (loading) {
+    if (isLoading) {
         return (
             <div className={cn("flex items-center justify-center bg-muted/20", className)}>
                 <Loader2 className="animate-spin h-6 w-6 text-muted-foreground" />
@@ -47,7 +45,7 @@ export function AuthImage({ src, className, alt, ...props }: AuthImageProps) {
         );
     }
 
-    if (error || !imgSrc) {
+    if (isError || !imgSrc) {
         return (
             <div className={cn("flex items-center justify-center bg-muted/20 text-muted-foreground", className)}>
                 <ImageOff className="h-6 w-6" />
