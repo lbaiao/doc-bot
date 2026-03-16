@@ -44,6 +44,27 @@ async def test_upload_document_sets_ready(client: AsyncClient, seeded_user):
 
 
 @pytest.mark.asyncio
+async def test_upload_then_create_chat_assigns_document(client: AsyncClient, seeded_user):
+    token = await login_and_get_token(client, "admin@example.com", "changeme123!")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    pdf_bytes = b"%PDF-1.4\n%EOF\n"
+    files = {"file": ("sample.pdf", pdf_bytes, "application/pdf")}
+
+    upload_resp = await client.post("/v1/documents:upload", files=files, headers=headers)
+    assert upload_resp.status_code == 202, upload_resp.text
+    document_id = upload_resp.json()["document_id"]
+
+    chat_resp = await client.post(
+        "/v1/chats",
+        json={"title": "chat-with-doc", "document_id": document_id},
+        headers=headers,
+    )
+    assert chat_resp.status_code == 201, chat_resp.text
+    assert chat_resp.json()["document_id"] == document_id
+
+
+@pytest.mark.asyncio
 async def test_chat_messages_echo(client: AsyncClient, seeded_user):
     token = await login_and_get_token(client, "admin@example.com", "changeme123!")
     headers = {"Authorization": f"Bearer {token}"}

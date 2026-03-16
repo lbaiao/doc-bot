@@ -3,7 +3,6 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import ChatDep, SessionDep
@@ -11,6 +10,8 @@ from app.core.security import current_active_user
 from app.db.models.chat import Chat, Message
 from app.db.models.user import User
 from app.db.schemas.chat import ChatCreateIn, ChatOut, MessageIn, MessageOut
+
+from session.db_registry import default_registry
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 
@@ -24,17 +25,28 @@ async def create_chat(
     """Create a new chat session."""
     title = chat_in.title or "New Chat"
     
+    # If document_id provided, verify it exists and belongs to user
+    document_id = chat_in.resolved_document_id
+    if document_id:
+        from app.db.models.document import Document
+        result = await session.execute(
+            select(Document).where(
+                Document.id == document_id,
+                Document.owner_id == current_user.id
+            )
+        )
+        if not result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Document not found")
+    
     chat = Chat(
         owner_id=current_user.id,
         title=title,
+        document_id=document_id,
     )
     
     session.add(chat)
     await session.commit()
     await session.refresh(chat)
-    
-    # TODO: If document_ids provided, associate them with the chat
-    # Need to create a chat_documents association table
     
     return chat
 
@@ -100,9 +112,12 @@ async def post_message(
         )
     )
     chat = result.scalar_one_or_none()
-    
+
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
+
+    if chat.document_id:
+        await default_registry.ensure_async(str(chat.document_id))
     
     # Store user message
     # Delegate to chat service (persists user/assistant messages)
@@ -147,7 +162,7 @@ async def get_messages(
         if cursor_message:
             query = query.where(Message.created_at > cursor_message.created_at)
     
-    query = query.order_by(Message.created_at).limit(limit)
+    query = query.options(selectinload(Message.tool_runs)).order_by(Message.created_at).limit(limit)
     
     result = await session.execute(query)
     messages = result.scalars().all()

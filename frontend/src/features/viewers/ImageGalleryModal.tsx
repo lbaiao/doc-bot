@@ -2,10 +2,11 @@ import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import { AuthImage } from '@/components/ui/auth-image';
+import { queryKeys } from '@/lib/query-keys';
 
 export function ImageGalleryModal({ isOpen, onClose, documentId }: { isOpen: boolean; onClose: () => void; documentId: string }) {
     const { data: figures } = useQuery({
-        queryKey: ['figures', documentId],
+        queryKey: queryKeys.figures(documentId),
         queryFn: async () => {
             const res = await apiClient.get(`/v1/documents/${documentId}/figures`);
             return res.data;

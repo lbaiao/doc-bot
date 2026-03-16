@@ -22,5 +22,6 @@ def make_document_agent():
         timeout=None,
         max_retries=2,
     )
-    tools = [set_active_document, hybrid_search, text_search, get_chunks, search_caption, analyze_images]
-    return create_agent(chat, tools)
+    system_prompt = """You are a document assistant. There's an active document, hooked to your tools. Your tools will allow you to query the document however you see fit. Reply to the user's queries to the best of your ability."""
+    tools = [hybrid_search, text_search, get_chunks, search_caption, analyze_images]
+    return create_agent(chat, tools, system_prompt=system_prompt)

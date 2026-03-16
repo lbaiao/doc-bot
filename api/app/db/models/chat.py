@@ -14,12 +14,14 @@ class Chat(Base):
     
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    document_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True)
     title: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     messages: Mapped[list["Message"]] = relationship(back_populates="chat", cascade="all, delete-orphan")
     tool_runs: Mapped[list["ToolRun"]] = relationship(back_populates="chat", cascade="all, delete-orphan")
+    document: Mapped["Document"] = relationship()
 
 
 class Message(Base):

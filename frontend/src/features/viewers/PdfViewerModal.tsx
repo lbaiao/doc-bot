@@ -5,6 +5,7 @@ import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { apiClient } from '@/lib/api-client';
 import { useQuery } from '@tanstack/react-query';
+import { queryKeys } from '@/lib/query-keys';
 
 // Setup pdf worker
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -36,7 +37,7 @@ export function PdfViewerModal({
 
     // For now, let's try to fetch document metadata to get storage_uri, then construct a fetch url
     const { data: doc } = useQuery({
-        queryKey: ['document', documentId],
+        queryKey: queryKeys.document(documentId),
         queryFn: async () => {
             const res = await apiClient.get(`/v1/documents/${documentId}`);
             return res.data;
@@ -50,7 +51,7 @@ export function PdfViewerModal({
     // Simplifying: assume we can fetch blob.
 
     const { data: pdfBlobValues } = useQuery({
-        queryKey: ['pdf-blob', documentId],
+        queryKey: queryKeys.pdfBlob(documentId),
         queryFn: async () => {
             if (!doc) return null;
             // We'll use our apiClient to fetch the bytes, handling Auth header
